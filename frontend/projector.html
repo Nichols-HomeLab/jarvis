@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Jarvis Projector</title>
+    <link rel="stylesheet" href="/src/projector.css" />
+  </head>
+  <body>
+    <main id="projector-app">
+      <div class="projector-header">
+        <div>
+          <div class="eyebrow">Jarvis Projector</div>
+          <h1 id="projector-title">Waiting for content</h1>
+        </div>
+        <div id="projector-status">connecting...</div>
+      </div>
+
+      <section id="card-view" class="card-view hidden">
+        <div id="card-kind" class="card-kind"></div>
+        <div id="card-content" class="card-content"></div>
+      </section>
+
+      <section id="bbox-view" class="bbox-view hidden">
+        <div id="bbox-image-shell" class="bbox-image-shell">
+          <img id="bbox-image" alt="Projector snapshot" />
+          <div id="bbox-overlay" class="bbox-overlay"></div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/projector.ts"></script>
+  </body>
+</html>

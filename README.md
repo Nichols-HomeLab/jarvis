@@ -1,196 +1,162 @@
-# JARVIS
+# Jarvis
 
-**Just A Rather Very Intelligent System.**
+Local-first voice assistant for a desk, workshop, and outbuilding setup.
 
-A voice-first AI assistant that runs on your Mac. Talk to it, and it talks back -- with a British accent, dry wit, and an audio-reactive particle orb straight out of the MCU.
+This repository currently contains the original Jarvis-style FastAPI + Vite voice assistant baseline, but the project direction for this fork is different: convert it from a macOS and cloud-dependent personal assistant into a self-hosted assistant that can listen, research, see through a Reolink camera, and project information onto a wall or desk.
 
-JARVIS connects to your Apple Calendar, Mail, and Notes. It can browse the web, spawn Claude Code sessions to build entire projects, and plan your day -- all through natural voice conversation.
+## Project Direction
 
-> "Will do, sir."
+Target experience:
 
-<!-- TODO: Add demo GIF or screenshot here -->
-<!-- ![JARVIS Demo](docs/demo.gif) -->
+- Voice-first interaction
+- Local or self-hosted model routing where possible
+- Browser-based projector display
+- Reolink snapshot vision
+- Home Assistant integration through safe backend tools
+- Future ESP32 mic/speaker satellites
+- Future hand-gesture interaction for projected objects
 
----
+Example command:
 
-## What It Does
+> "Hey Jarvis, research a Dell R630 and project the size of it."
 
-- **Voice conversation** -- speak naturally, get spoken responses with a JARVIS voice
-- **Builds software** -- say "build me a landing page" and watch Claude Code do the work
-- **Reads your calendar** -- "What's on my schedule today?"
-- **Reads your email** -- "Any unread messages?" (read-only, by design)
-- **Browses the web** -- "Search for the best restaurants in Austin"
-- **Manages tasks** -- "Remind me to call the client tomorrow"
-- **Takes notes** -- "Save that as a note"
-- **Remembers things** -- "I prefer React over Vue" (it remembers next time)
-- **Plans your day** -- combines calendar, tasks, and priorities into a plan
-- **Sees your screen** -- knows what apps are open for context-aware responses
-- **Audio-reactive orb** -- a Three.js particle visualization that pulses with JARVIS's voice
+## Implemented MVP Additions
 
-## Requirements
+This repo now includes a parallel local-first MVP stack under [backend](</C:/Users/david/Documents/GitHub/jarvis/backend>) and new frontend pages in [frontend](</C:/Users/david/Documents/GitHub/jarvis/frontend>) for the workshop vision flow.
 
-- **macOS** (uses AppleScript for Calendar, Mail, Notes integration)
-- **Python 3.11+**
-- **Node.js 18+**
-- **Google Chrome** (required for Web Speech API)
-- **Anthropic API key** -- powers the AI brain ([get one here](https://console.anthropic.com/))
-- **Fish Audio API key** -- powers the voice ([get one here](https://fish.audio/))
-- **Claude Code CLI** -- for spawning dev tasks ([install here](https://docs.anthropic.com/en/docs/claude-code))
+Implemented pieces:
 
-## Quick Start (with Claude Code)
+- Env-driven local backend config
+- OpenAI-compatible model endpoint support
+- SQLite-backed tool and object memory
+- Camera snapshot capture for configured cameras
+- Vision scan endpoint for pegboard or workbench snapshots
+- Tool memory search endpoint
+- Projector websocket event stream
+- Projector page with bounding-box overlay rendering
+- Vision dashboard page for scans, searches, and command execution
+- Dockerfiles and `docker-compose.yml` for the new stack
 
-The fastest way to get running:
+Current MVP commands:
+
+- `Jarvis, scan the pegboard`
+- `Jarvis, scan the workbench`
+- `Jarvis, where are my screwdrivers?`
+- `Jarvis, show me where the screwdrivers are`
+
+## Current Repo Status
+
+Today, this repo is still much closer to the original implementation than the target system. The current codebase is centered around:
+
+- FastAPI backend in [server.py](/C:/Users/david/Documents/GitHub/jarvis/server.py)
+- Vite/TypeScript frontend in [frontend](</C:/Users/david/Documents/GitHub/jarvis/frontend>)
+- WebSocket voice loop
+- Anthropic API for reasoning
+- Fish Audio for TTS
+- Apple Calendar, Mail, and Notes integrations
+- macOS-oriented automation and desktop awareness
+
+That means this fork should be treated as a migration project, not as a finished outbuilding assistant.
+
+## Documentation Map
+
+- [Project Vision](</C:/Users/david/Documents/GitHub/jarvis/docs/project-vision.md>)
+- [Current State Audit](</C:/Users/david/Documents/GitHub/jarvis/docs/current-state-audit.md>)
+- [Target Architecture](</C:/Users/david/Documents/GitHub/jarvis/docs/target-architecture.md>)
+- [Hardware And Integrations](</C:/Users/david/Documents/GitHub/jarvis/docs/hardware-and-integrations.md>)
+- [Implementation Roadmap](</C:/Users/david/Documents/GitHub/jarvis/docs/implementation-roadmap.md>)
+- [Repo Refactor Plan](</C:/Users/david/Documents/GitHub/jarvis/docs/repo-refactor-plan.md>)
+
+## Recommended Build Strategy
+
+Do not try to jump directly to gesture-controlled true-size projection. The practical order for this repo is:
+
+1. Replace Anthropic with a local OpenAI-compatible model client.
+2. Replace Fish Audio with a local TTS engine.
+3. Stabilize the voice loop around local STT and TTS.
+4. Add a projector display page and projector event channel.
+5. Add web search as a backend tool.
+6. Add Reolink snapshot-based vision.
+7. Add Home Assistant read and control tools with safety levels.
+8. Add ESP32 satellite support.
+9. Add gesture interaction and calibration.
+
+## Baseline Local Development
+
+If you want to inspect or run the current baseline before refactoring it:
 
 ```bash
-git clone https://github.com/yourusername/jarvis.git
-cd jarvis
-claude
-```
-
-Claude Code will read the project's `CLAUDE.md` and walk you through setup step by step -- API keys, dependencies, SSL certs, everything.
-
-## Manual Setup
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/yourusername/jarvis.git
-cd jarvis
-
-# 2. Set up environment
-cp .env.example .env
-# Edit .env with your API keys (see below)
-
-# 3. Install Python dependencies
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
+cd frontend
+npm install
+npm run dev
+```
 
-# 4. Install frontend dependencies
-cd frontend && npm install && cd ..
+In a second terminal:
 
-# 5. Generate SSL certificates (needed for secure WebSocket)
-openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'
-
-# 6. Start the backend (Terminal 1)
+```bash
 python server.py
-
-# 7. Start the frontend (Terminal 2)
-cd frontend && npm run dev
-
-# 8. Open Chrome
-open http://localhost:5173
 ```
 
-Click the page once to enable audio, then speak. JARVIS will respond.
+This starts the current implementation, not the final local-first architecture described in the docs.
 
-## Configuration
+## Docker Quick Start
 
-Edit your `.env` file:
+The new local-first MVP is intended to run with Docker Compose and a repo-root `.env`.
 
-```env
-# Required
-ANTHROPIC_API_KEY=your-anthropic-api-key-here
-FISH_API_KEY=your-fish-audio-api-key-here
+1. Copy [.env.example](/C:/Users/david/Documents/GitHub/jarvis/.env.example) to `.env`.
+2. Set `OPENAI_BASE_URL` to your local OpenAI-compatible endpoint.
+3. Set `OPENAI_VISION_MODEL`, `OPENAI_ROUTER_MODEL`, and camera snapshot URLs.
+4. Start the stack:
 
-# Optional -- your name (JARVIS will address you personally)
-USER_NAME=Tony
-
-# Optional -- specific calendar accounts (comma-separated)
-# Leave empty to auto-discover all calendars
-CALENDAR_ACCOUNTS=you@gmail.com,work@company.com
+```bash
+docker compose up --build
 ```
 
-## Architecture
+Endpoints:
 
-```
-Microphone -> Web Speech API -> WebSocket -> FastAPI -> Claude (Haiku) -> Fish Audio TTS -> WebSocket -> Speaker
-                                                |
-                                                v
-                                        Claude Code Tasks
-                                        (spawns real dev work)
-                                                |
-                                                v
-                                        AppleScript Bridge
-                                        (Calendar, Mail, Notes, Terminal)
-```
+- Frontend orb: `http://localhost:5173/`
+- Vision dashboard: `http://localhost:5173/dashboard.html`
+- Projector view: `http://localhost:5173/projector.html`
+- Local workshop API: `http://localhost:8000/api/v2/health`
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | FastAPI + Python (`server.py`, ~2300 lines) |
-| Frontend | Vite + TypeScript + Three.js |
-| Communication | WebSocket (JSON messages + binary audio) |
-| AI (fast) | Claude Haiku -- low-latency voice responses |
-| AI (deep) | Claude Opus -- research and complex tasks |
-| TTS | Fish Audio with JARVIS voice model |
-| System | AppleScript for all macOS integrations |
+If you do not have a live vision model ready yet, keep `ALLOW_MOCK_VISION=true` so the scan pipeline still runs without hard-failing.
 
-## How the Voice Loop Works
+## Immediate Repo Priorities
 
-1. You speak into your microphone
-2. Chrome's Web Speech API transcribes your speech in real-time
-3. The transcript is sent to the server via WebSocket
-4. JARVIS detects intent -- conversation, action, or build request
-5. For actions: spawns a Claude Code subprocess or runs AppleScript
-6. Generates a response via Claude Haiku (optimized for speed)
-7. Fish Audio converts the response to speech with the JARVIS voice
-8. Audio streams back to the browser via WebSocket
-9. The Three.js orb deforms and pulses in response to the audio
-10. Background tasks notify you proactively when they complete
+- Break the monolithic backend into clearer modules.
+- Introduce config for multiple model backends.
+- Separate current macOS-specific actions from future local/self-hosted tools.
+- Add `docs/` as the source of truth for the migration.
+- Keep the orb UI, WebSocket pattern, and general action/tool architecture where they still fit.
 
-## Key Files
+## Constraints To Respect
 
-| File | Purpose |
-|------|---------|
-| `server.py` | Main server -- WebSocket handler, LLM, action system |
-| `frontend/src/orb.ts` | Three.js particle orb visualization |
-| `frontend/src/voice.ts` | Web Speech API + audio playback |
-| `frontend/src/main.ts` | Frontend state machine |
-| `memory.py` | SQLite memory system with FTS5 full-text search |
-| `calendar_access.py` | Apple Calendar integration via AppleScript |
-| `mail_access.py` | Apple Mail integration (read-only) |
-| `notes_access.py` | Apple Notes integration |
-| `actions.py` | System actions (Terminal, Chrome, Claude Code) |
-| `browser.py` | Playwright web automation |
-| `work_mode.py` | Persistent Claude Code sessions |
-| `planner.py` | Multi-step task planning with smart questions |
+- The LLM should not directly control hardware.
+- Every hardware or service action should go through validated backend tools.
+- Dangerous actions must require confirmation.
+- Reolink vision should start with snapshots, not continuous live video to an LLM.
+- The first projector implementation can be visually approximate before calibration.
 
-## Features in Detail
+## What To Keep From This Repo
 
-### Action System
-JARVIS uses action tags to trigger real system actions:
-- `[ACTION:BUILD]` -- spawns Claude Code to build a project
-- `[ACTION:BROWSE]` -- opens Chrome to a URL or search query
-- `[ACTION:RESEARCH]` -- deep research with Claude Opus, outputs an HTML report
-- `[ACTION:PROMPT_PROJECT]` -- connects to an existing project via Claude Code
-- `[ACTION:ADD_TASK]` -- creates a tracked task with priority and due date
-- `[ACTION:REMEMBER]` -- stores a fact for future context
+- FastAPI backend pattern
+- Browser frontend pattern
+- WebSocket communication model
+- Voice assistant interaction loop
+- Orb-based assistant presentation
+- Memory and action concepts where they still fit
 
-### Memory System
-JARVIS remembers things you tell it using SQLite with FTS5 full-text search. Preferences, decisions, and facts persist across sessions.
+## What To Replace
 
-### Calendar & Mail
-All macOS integrations use AppleScript -- no OAuth flows, no token management. Just native system access. Mail is intentionally read-only for safety.
-
-## Contributing
-
-Contributions are welcome. Some areas that could use work:
-
-- **Linux/Windows support** -- replace AppleScript with cross-platform alternatives
-- **Alternative TTS engines** -- add ElevenLabs, OpenAI TTS, or local models
-- **Alternative LLMs** -- add OpenAI, Gemini, or local model support
-- **Mobile client** -- a companion app for voice interaction on the go
-- **Plugin system** -- make it easy to add new actions and integrations
-
-Please open an issue before submitting large PRs so we can discuss the approach.
+- Anthropic-specific reasoning calls
+- Fish Audio TTS
+- Apple Calendar, Mail, and Notes assumptions
+- macOS desktop control as a core feature
+- Claude Code oriented task flow as the center of the product
 
 ## License
 
-Free for personal, non-commercial use. Commercial use requires a license — visit [ethanplus.ai](https://ethanplus.ai) for inquiries. See [LICENSE](LICENSE) for details.
-
-## Credits
-
-Built by [Ethan](https://ethanplus.ai).
-
-Powered by [Anthropic Claude](https://anthropic.com) and [Fish Audio](https://fish.audio).
-
-Inspired by the AI that started it all -- Tony Stark's JARVIS.
-
-> **Disclaimer:** This is an independent fan project and is not affiliated with, endorsed by, or connected to Marvel Entertainment, The Walt Disney Company, or any related entities. The JARVIS name and character are property of Marvel Entertainment.
+See [LICENSE](/C:/Users/david/Documents/GitHub/jarvis/LICENSE).

@@ -1,0 +1,123 @@
+:root {
+  color-scheme: dark;
+  --bg: #08111a;
+  --panel: rgba(9, 23, 34, 0.88);
+  --line: rgba(128, 204, 255, 0.75);
+  --glow: rgba(63, 192, 255, 0.3);
+  --text: #edf8ff;
+  --muted: #96b7ca;
+  --accent: #3fc0ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top, rgba(39, 90, 128, 0.35), transparent 40%),
+    linear-gradient(180deg, #050b11 0%, #08111a 100%);
+}
+
+#projector-app {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.projector-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+.eyebrow {
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+#projector-title {
+  margin: 4px 0 0;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+}
+
+#projector-status {
+  padding: 10px 14px;
+  border: 1px solid rgba(150, 183, 202, 0.25);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(4, 12, 19, 0.65);
+}
+
+.hidden {
+  display: none;
+}
+
+.card-view {
+  max-width: 900px;
+  padding: 32px;
+  border: 1px solid rgba(150, 183, 202, 0.18);
+  border-radius: 24px;
+  background: var(--panel);
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.35);
+}
+
+.card-kind {
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.8rem;
+  margin-bottom: 16px;
+}
+
+.card-content {
+  font-size: clamp(1.2rem, 2vw, 1.8rem);
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.bbox-image-shell {
+  position: relative;
+  width: min(100%, 1400px);
+  border-radius: 24px;
+  overflow: hidden;
+  border: 1px solid rgba(150, 183, 202, 0.18);
+  background: rgba(4, 12, 19, 0.7);
+}
+
+#bbox-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.bbox-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.detected-box {
+  position: absolute;
+  border: 3px solid var(--line);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15), 0 0 18px var(--glow);
+}
+
+.detected-label {
+  position: absolute;
+  top: -30px;
+  left: 0;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(6, 15, 23, 0.82);
+  color: var(--text);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}

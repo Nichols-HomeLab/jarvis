@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Jarvis Vision Dashboard</title>
+    <link rel="stylesheet" href="/src/dashboard.css" />
+  </head>
+  <body>
+    <main class="dashboard">
+      <header class="hero">
+        <div>
+          <div class="eyebrow">Local Workshop Assistant</div>
+          <h1>Vision Dashboard</h1>
+          <p>Scan cameras, inspect tool memory, and send projector overlays.</p>
+        </div>
+        <div class="hero-actions">
+          <a href="/" class="ghost-link">Assistant Orb</a>
+          <a href="/projector.html" class="ghost-link">Projector View</a>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Cameras</h2>
+          <button id="refresh-cameras">Refresh</button>
+        </div>
+        <div id="camera-list" class="camera-grid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Assistant Command</h2>
+        </div>
+        <form id="command-form" class="inline-form">
+          <input id="command-input" placeholder='Example: "where are my screwdrivers?"' />
+          <button type="submit">Run</button>
+        </form>
+        <pre id="command-output" class="output"></pre>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Tool Memory Search</h2>
+        </div>
+        <form id="search-form" class="inline-form">
+          <input id="search-input" placeholder="screwdriver, pliers, multimeter..." />
+          <button type="submit">Search</button>
+        </form>
+        <pre id="search-output" class="output"></pre>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Recent Memory</h2>
+        </div>
+        <div id="recent-memory" class="memory-list"></div>
+      </section>
+    </main>
+    <script type="module" src="/src/dashboard.ts"></script>
+  </body>
+</html>

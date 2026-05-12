@@ -1,0 +1,170 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1117;
+  --panel: #111b24;
+  --panel-2: #152230;
+  --line: rgba(148, 194, 228, 0.22);
+  --text: #ecf5ff;
+  --muted: #97afc3;
+  --accent: #55d3c7;
+  --accent-2: #f1bb6b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(85, 211, 199, 0.08), transparent 24%),
+    radial-gradient(circle at top right, rgba(241, 187, 107, 0.12), transparent 30%),
+    linear-gradient(180deg, #091016 0%, #0b1117 100%);
+}
+
+.dashboard {
+  width: min(1200px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 32px 0 48px;
+}
+
+.hero,
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: rgba(17, 27, 36, 0.88);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 28px;
+  margin-bottom: 24px;
+}
+
+.hero h1 {
+  margin: 6px 0 10px;
+  font-size: clamp(2rem, 3vw, 3rem);
+}
+
+.hero p,
+.eyebrow,
+.camera-zone,
+.memory-meta,
+.memory-time {
+  color: var(--muted);
+}
+
+.hero-actions {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.ghost-link,
+button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  background: rgba(9, 16, 22, 0.75);
+  text-decoration: none;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.panel {
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.panel-heading h2 {
+  margin: 0;
+}
+
+.camera-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.camera-card,
+.memory-card {
+  padding: 18px;
+  border-radius: 18px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+
+.camera-name,
+.memory-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.camera-card button {
+  margin-top: 14px;
+  width: 100%;
+}
+
+.inline-form {
+  display: flex;
+  gap: 12px;
+}
+
+input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  color: var(--text);
+  background: rgba(9, 16, 22, 0.9);
+}
+
+.output {
+  margin: 16px 0 0;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(8, 13, 18, 0.88);
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 80px;
+}
+
+.memory-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.memory-body {
+  margin-top: 8px;
+}
+
+.memory-time {
+  margin-top: 12px;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 720px) {
+  .hero,
+  .inline-form {
+    flex-direction: column;
+  }
+
+  .hero-actions {
+    align-items: stretch;
+  }
+}
