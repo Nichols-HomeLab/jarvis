@@ -27,6 +27,7 @@ data/media/
 dist/
 .vite/
 frontend/.vite/
+frontend/public/gestures/
 
 # IDE / System
 .DS_Store

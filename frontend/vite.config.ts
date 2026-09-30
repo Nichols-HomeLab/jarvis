@@ -19,12 +19,14 @@ export default defineConfig({
     },
   },
   build: {
+    target: "es2022",
     outDir: "dist",
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),
         projector: resolve(__dirname, "projector.html"),
         dashboard: resolve(__dirname, "dashboard.html"),
+        gestures: resolve(__dirname, "gestures.html"),
       },
     },
   },

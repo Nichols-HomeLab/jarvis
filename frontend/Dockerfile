@@ -6,6 +6,7 @@ COPY package.json package-lock.json /app/
 RUN npm install
 
 COPY . /app
+RUN node scripts/prepare-gestures.mjs
 
 EXPOSE 5173
 

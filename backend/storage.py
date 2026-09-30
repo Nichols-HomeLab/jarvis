@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -67,6 +67,11 @@ class Storage:
                     zone_name TEXT NOT NULL,
                     description TEXT,
                     polygon TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS processed_camera_events (
+                    event_id TEXT PRIMARY KEY,
+                    processed_at TEXT NOT NULL
                 );
                 """
             )
@@ -148,10 +153,15 @@ class Storage:
                 connection.close()
 
     def find_last_seen(self, query: str) -> SearchResult | None:
-        like = f"%{query.lower()}%"
+        normalized = query.strip().lower()
+        variants = {normalized, normalized.rstrip("s") if normalized.endswith("s") and not normalized.endswith("ss") else normalized}
+        patterns = [f"%{part}%" for part in variants if part]
+        if not patterns:
+            return None
+        where = " OR ".join("(lower(m.object_name) LIKE ? OR lower(m.object_category) LIKE ? OR lower(m.description) LIKE ?)" for _ in patterns)
         with self.connect() as conn:
             row = conn.execute(
-                """
+                f"""
                 SELECT
                     m.object_name,
                     m.object_category,
@@ -175,13 +185,11 @@ class Storage:
                  AND d.zone_name = m.zone_name
                  AND lower(d.label) = lower(m.object_category)
                  AND d.snapshot_path = m.snapshot_path
-                WHERE lower(m.object_name) LIKE ?
-                   OR lower(m.object_category) LIKE ?
-                   OR lower(m.description) LIKE ?
+                WHERE {where}
                 ORDER BY datetime(m.last_seen_at) DESC
                 LIMIT 1
                 """,
-                (like, like, like),
+                tuple(value for pattern in patterns for value in (pattern, pattern, pattern)),
             ).fetchone()
 
         if row is None:
@@ -201,7 +209,7 @@ class Storage:
             actor=row["actor"],
             direction=row["direction"],
             confidence=float(row["confidence"]),
-            last_seen_at=datetime.fromisoformat(row["last_seen_at"]),
+            last_seen_at=self._parse_time(row["last_seen_at"]),
             snapshot_path=row["snapshot_path"],
             clip_path=row["clip_path"],
             bbox=bbox,
@@ -235,10 +243,23 @@ class Storage:
                     actor=row["actor"],
                     direction=row["direction"],
                     confidence=float(row["confidence"]),
-                    last_seen_at=datetime.fromisoformat(row["last_seen_at"]),
+                    last_seen_at=self._parse_time(row["last_seen_at"]),
                     snapshot_path=row["snapshot_path"],
                     clip_path=row["clip_path"],
                     bbox=None,
                 )
             )
         return results
+
+    def has_event(self, event_id: str) -> bool:
+        with self.connect() as conn:
+            return conn.execute("SELECT 1 FROM processed_camera_events WHERE event_id = ?", (event_id,)).fetchone() is not None
+
+    def record_event(self, event_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO processed_camera_events (event_id, processed_at) VALUES (?, ?)", (event_id, datetime.now(timezone.utc).isoformat()))
+
+    @staticmethod
+    def _parse_time(value: str) -> datetime:
+        timestamp = datetime.fromisoformat(value)
+        return timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=timezone.utc)

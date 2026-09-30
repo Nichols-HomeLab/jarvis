@@ -6,7 +6,7 @@ Turn the current codebase into a maintainable platform for the local outbuilding
 
 ## Baseline Reality
 
-The current implementation is dominated by [server.py](/C:/Users/david/Documents/GitHub/jarvis/server.py) and mixes:
+The legacy implementation is dominated by [server.py](../server.py) and mixes:
 
 - Voice transport
 - Assistant prompting
@@ -90,7 +90,7 @@ This matters before Home Assistant control is added.
 
 ## 6. Establish Docs As Source Of Truth
 
-Use the markdown files in [docs](</C:/Users/david/Documents/GitHub/jarvis/docs>) as the project contract during the migration.
+Use the markdown files in [docs](README.md) as the project contract during the migration.
 
 ## Suggested Near-Term File Evolution
 

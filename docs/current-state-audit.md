@@ -2,7 +2,7 @@
 
 ## Summary
 
-This repo already has a useful foundation, but it is not yet aligned with the local outbuilding assistant design.
+This audit describes the original `server.py` baseline. The local Docker path now runs `backend.main` and implements the workshop integrations described in [Operations](operations.md).
 
 The main strengths are:
 
@@ -11,7 +11,7 @@ The main strengths are:
 - Existing browser frontend and orb UI
 - Existing memory and action concepts
 
-The main mismatch areas are:
+The legacy mismatch areas are:
 
 - Anthropic-specific model calls
 - Fish Audio TTS dependency
@@ -20,7 +20,7 @@ The main mismatch areas are:
 
 ## Current Backend Shape
 
-The backend is still concentrated mostly in [server.py](/C:/Users/david/Documents/GitHub/jarvis/server.py), which currently handles several concerns together:
+The legacy backend is concentrated mostly in [server.py](../server.py), which handles several concerns together:
 
 - WebSocket session management
 - Intent classification
@@ -34,7 +34,7 @@ This is workable for the original project but becomes a maintenance problem for 
 
 ## Current Frontend Shape
 
-The frontend is in [frontend](</C:/Users/david/Documents/GitHub/jarvis/frontend>) and already provides a usable baseline:
+The frontend is in [frontend](../frontend) and retains the orb implementation:
 
 - Orb visualization
 - Browser microphone capture
@@ -42,11 +42,11 @@ The frontend is in [frontend](</C:/Users/david/Documents/GitHub/jarvis/frontend>
 - Audio playback
 - Settings surface
 
-What it does not yet include:
+The local Docker frontend now also includes:
 
 - Projector page
-- Admin dashboard for cameras, tools, and model routing
-- Gesture interaction surface
+- Vision dashboard for cameras and memory
+- Gesture camera page
 - Dimension overlay rendering
 
 ## Existing Integrations To Migrate Away From
@@ -67,7 +67,7 @@ These should either be removed, isolated behind adapters, or deprecated as the r
 - FastAPI app structure
 - WebSocket message pattern
 - Voice interaction loop
-- Memory concepts in [memory.py](/C:/Users/david/Documents/GitHub/jarvis/memory.py)
+- Memory concepts in [memory.py](../memory.py)
 - Tool and action registry direction
 - Orb-based assistant identity
 

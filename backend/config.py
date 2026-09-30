@@ -30,12 +30,9 @@ def _env_bool(name: str, default: bool = False) -> bool:
 @dataclass(slots=True)
 class CameraConfig:
     name: str
-    snapshot_url: str
     zone_name: str
-    rtsp_url: str | None = None
-    username: str | None = None
-    password: str | None = None
     enabled: bool = True
+    frigate_name: str | None = None
 
 
 @dataclass(slots=True)
@@ -55,7 +52,31 @@ class Settings:
     camera_snapshot_dir: Path = Path("data/media/current")
     camera_event_dir: Path = Path("data/media/events")
     cameras: list[CameraConfig] = field(default_factory=list)
-    allow_mock_vision: bool = True
+    allow_mock_vision: bool = False
+    search_url: str = ""
+    home_assistant_url: str = ""
+    home_assistant_token: str = ""
+    ha_allowed_entities: list[str] = field(default_factory=list)
+    ha_dangerous_domains: list[str] = field(default_factory=lambda: ["lock", "cover", "climate", "switch"])
+    stt_base_url: str = ""
+    stt_model: str = "whisper-1"
+    tts_base_url: str = ""
+    tts_model: str = "tts-1"
+    tts_voice: str = "alloy"
+    motion_webhook_token: str = ""
+    projector_width_mm: float = 0
+    projector_height_mm: float = 0
+    frigate_url: str = ""
+    frigate_token: str = ""
+    frigate_user: str = ""
+    frigate_password: str = ""
+    satellite_token: str = ""
+    mqtt_host: str = ""
+    mqtt_port: int = 1883
+    mqtt_user: str = ""
+    mqtt_password: str = ""
+    mqtt_topic_prefix: str = "frigate"
+    access_token: str = ""
 
     @property
     def database_path(self) -> Path:
@@ -70,13 +91,13 @@ def _parse_cameras(raw_value: str | None) -> list[CameraConfig]:
         return [
             CameraConfig(
                 name="pegboard",
-                snapshot_url="http://reolink.local/cgi-bin/api.cgi?cmd=Snap&channel=0&rs=jarvis&user=admin&password=password",
                 zone_name="pegboard",
+                frigate_name="pegboard",
             ),
             CameraConfig(
                 name="workbench",
-                snapshot_url="http://reolink.local/cgi-bin/api.cgi?cmd=Snap&channel=1&rs=jarvis&user=admin&password=password",
                 zone_name="main_workbench",
+                frigate_name="workbench",
             ),
         ]
 
@@ -86,12 +107,9 @@ def _parse_cameras(raw_value: str | None) -> list[CameraConfig]:
         cameras.append(
             CameraConfig(
                 name=item["name"],
-                snapshot_url=item["snapshot_url"],
                 zone_name=item.get("zone_name", item["name"]),
-                rtsp_url=item.get("rtsp_url"),
-                username=item.get("username"),
-                password=item.get("password"),
                 enabled=bool(item.get("enabled", True)),
+                frigate_name=item.get("frigate_name", item["name"]),
             )
         )
     return cameras
@@ -120,7 +138,30 @@ def load_settings() -> Settings:
         camera_snapshot_dir=snapshot_dir,
         camera_event_dir=event_dir,
         cameras=_parse_cameras(os.getenv("JARVIS_CAMERAS_JSON")),
-        allow_mock_vision=_env_bool("ALLOW_MOCK_VISION", True),
+        allow_mock_vision=_env_bool("ALLOW_MOCK_VISION", False),
+        search_url=os.getenv("SEARXNG_URL", "").rstrip("/"),
+        home_assistant_url=os.getenv("HOME_ASSISTANT_URL", "").rstrip("/"),
+        home_assistant_token=os.getenv("HOME_ASSISTANT_TOKEN", ""),
+        ha_allowed_entities=[x.strip() for x in os.getenv("HA_ALLOWED_ENTITIES", "").split(",") if x.strip()],
+        stt_base_url=os.getenv("STT_BASE_URL", "").rstrip("/"),
+        stt_model=os.getenv("STT_MODEL", "whisper-1"),
+        tts_base_url=os.getenv("TTS_BASE_URL", "").rstrip("/"),
+        tts_model=os.getenv("TTS_MODEL", "tts-1"),
+        tts_voice=os.getenv("TTS_VOICE", "alloy"),
+        motion_webhook_token=os.getenv("MOTION_WEBHOOK_TOKEN", ""),
+        projector_width_mm=float(os.getenv("PROJECTOR_WIDTH_MM", "0")),
+        projector_height_mm=float(os.getenv("PROJECTOR_HEIGHT_MM", "0")),
+        frigate_url=os.getenv("FRIGATE_URL", "").rstrip("/"),
+        frigate_token=os.getenv("FRIGATE_TOKEN", ""),
+        frigate_user=os.getenv("FRIGATE_USER", ""),
+        frigate_password=os.getenv("FRIGATE_PASSWORD", ""),
+        satellite_token=os.getenv("SATELLITE_TOKEN", ""),
+        mqtt_host=os.getenv("MQTT_HOST", ""),
+        mqtt_port=int(os.getenv("MQTT_PORT", "1883")),
+        mqtt_user=os.getenv("MQTT_USER", ""),
+        mqtt_password=os.getenv("MQTT_PASSWORD", ""),
+        mqtt_topic_prefix=os.getenv("MQTT_TOPIC_PREFIX", "frigate"),
+        access_token=os.getenv("JARVIS_ACCESS_TOKEN", ""),
     )
 
     settings.media_root.mkdir(parents=True, exist_ok=True)

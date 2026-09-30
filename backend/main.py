@@ -1,13 +1,24 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import base64
+import secrets
+import re
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Header, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend.config import load_settings
+from backend.auth import SessionGate, COOKIE_NAME
 from backend.models.openai_compatible import OpenAICompatibleClient
 from backend.projector.hub import ProjectorHub
+from backend.audio import LocalAudio
+from backend.tools import HomeAssistant, WebSearch
+from backend.vision.frigate import FrigateClient
+from backend.vision.mqtt_events import FrigateMQTTSubscriber
 from backend.schemas import (
     AssistantCommandRequest,
     CameraSnapshot,
@@ -15,6 +26,8 @@ from backend.schemas import (
     ProjectBoundingBoxRequest,
     ProjectCardRequest,
     ScanResult,
+    DimensionRequest,
+    GestureEvent,
 )
 from backend.service import JarvisLocalService
 from backend.storage import Storage
@@ -22,8 +35,10 @@ from backend.vision.camera_manager import CameraManager
 
 
 settings = load_settings()
+session_gate = SessionGate(settings.access_token, settings.cors_origins)
 storage = Storage(settings.database_path)
-cameras = CameraManager(settings.cameras, settings.camera_snapshot_dir)
+frigate = FrigateClient(settings.frigate_url, settings.frigate_token, settings.frigate_user, settings.frigate_password)
+cameras = CameraManager(settings.cameras, settings.camera_snapshot_dir, frigate)
 model_client = OpenAICompatibleClient(
     base_url=settings.openai_base_url,
     api_key=settings.openai_api_key,
@@ -33,9 +48,47 @@ model_client = OpenAICompatibleClient(
     allow_mock_vision=settings.allow_mock_vision,
 )
 projector_hub = ProjectorHub()
-service = JarvisLocalService(settings, storage, cameras, model_client, projector_hub)
+service = JarvisLocalService(
+    settings, storage, cameras, model_client, projector_hub,
+    WebSearch(settings.search_url),
+    HomeAssistant(settings.home_assistant_url, settings.home_assistant_token, settings.ha_allowed_entities, settings.ha_dangerous_domains),
+)
+audio = LocalAudio(settings.stt_base_url, settings.stt_model, settings.tts_base_url, settings.tts_model, settings.tts_voice, settings.openai_api_key)
+_event_locks: set[str] = set()
 
-app = FastAPI(title="Jarvis Local Workshop API", version="0.2.0")
+
+async def ingest_frigate_event(event_id: str) -> dict[str, object]:
+    if storage.has_event(event_id) or event_id in _event_locks:
+        return {"event_id": event_id, "status": "already_processed"}
+    _event_locks.add(event_id)
+    try:
+        event = await frigate.event(event_id)
+        camera = next((c for c in cameras.list_cameras() if (c.frigate_name or c.name) == event.get("camera")), None)
+        if camera is None:
+            return {"event_id": event_id, "status": "camera_not_configured"}
+        image = await frigate.event_snapshot(event_id)
+        target = settings.camera_event_dir / f"{event_id}.jpg"
+        target.write_bytes(image)
+        scan = await model_client.analyze_snapshot(camera.name, camera.zone_name, image, service._public_media_path(target.as_posix()))
+        storage.save_scan(scan)
+        storage.record_event(event_id)
+        return {"event_id": event_id, "detections": len(scan.detections)}
+    finally:
+        _event_locks.discard(event_id)
+
+
+subscriber = FrigateMQTTSubscriber(settings, ingest_frigate_event)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    subscriber.start()
+    try:
+        yield
+    finally:
+        subscriber.stop()
+
+app = FastAPI(title="Jarvis Local Workshop API", version="0.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -43,6 +96,47 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def authorize(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or path == "/api/v2/health" or path.startswith("/api/v2/auth/"):
+        return await call_next(request)
+    if path.startswith("/api/v2/events/") or path == "/api/v2/satellite/turn":
+        return await call_next(request)
+    if not session_gate.valid_request(request):
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    if request.method not in {"GET", "HEAD"} and not session_gate.valid_origin(
+        request.headers.get("origin"), request.headers.get("host", "")
+    ):
+        return JSONResponse({"detail": "Origin not allowed"}, status_code=403)
+    return await call_next(request)
+
+
+class LoginRequest(BaseModel):
+    token: str
+
+
+@app.get("/api/v2/auth/session")
+async def auth_session(request: Request):
+    return {"authenticated": session_gate.valid_request(request)}
+
+
+@app.post("/api/v2/auth/login")
+async def auth_login(request: Request, payload: LoginRequest, response: Response):
+    if not session_gate.valid_origin(request.headers.get("origin"), request.headers.get("host", "")):
+        raise HTTPException(status_code=403, detail="Origin not allowed")
+    if not secrets.compare_digest(payload.token, session_gate.token):
+        raise HTTPException(status_code=401, detail="Invalid access token")
+    response.set_cookie(COOKIE_NAME, session_gate.cookie_value, httponly=True, secure=request.url.scheme == "https", samesite="strict", max_age=86400)
+    return {"authenticated": True}
+
+
+@app.post("/api/v2/auth/logout")
+async def auth_logout(response: Response):
+    response.delete_cookie(COOKIE_NAME, samesite="strict")
+    return {"authenticated": False}
 
 app.mount("/media", StaticFiles(directory=str(settings.media_root)), name="media")
 
@@ -68,7 +162,9 @@ async def health() -> dict[str, object]:
         "status": "ok",
         "database": settings.database_path.as_posix(),
         "cameras": [camera.name for camera in cameras.list_cameras()],
-        "openai_base_url": settings.openai_base_url,
+        "frigate_configured": bool(settings.frigate_url),
+        "stt_configured": bool(settings.stt_base_url),
+        "tts_configured": bool(settings.tts_base_url),
         "vision_model": settings.vision_model,
     }
 
@@ -79,8 +175,7 @@ async def list_cameras() -> list[dict[str, object]]:
         {
             "name": camera.name,
             "zone_name": camera.zone_name,
-            "snapshot_url": camera.snapshot_url,
-            "rtsp_url": camera.rtsp_url,
+            "frigate_name": camera.frigate_name or camera.name,
             "enabled": camera.enabled,
         }
         for camera in cameras.list_cameras()
@@ -90,7 +185,9 @@ async def list_cameras() -> list[dict[str, object]]:
 @app.post("/api/v2/cameras/{camera_name}/snapshot", response_model=CameraSnapshot)
 async def capture_snapshot(camera_name: str) -> CameraSnapshot:
     try:
-        return await cameras.capture_snapshot(camera_name)
+        snapshot = await cameras.capture_snapshot(camera_name)
+        snapshot.snapshot_path = service._public_media_path(snapshot.snapshot_path)
+        return snapshot
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
@@ -117,6 +214,7 @@ async def search_tool_memory(q: str):
 
 @app.get("/api/v2/tool-memory/recent")
 async def recent_memories(limit: int = 20):
+    limit = max(1, min(limit, 100))
     return storage.recent_memories(limit=limit)
 
 
@@ -146,8 +244,57 @@ async def project_card(request: ProjectCardRequest) -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/v2/events/reolink-motion/{camera_name}")
-async def reolink_motion_event(camera_name: str, request: MotionEventRequest):
+@app.post("/api/v2/projector/dimensions")
+async def project_dimensions(request: DimensionRequest) -> dict[str, str]:
+    await service.project_dimensions(request)
+    return {"status": "ok"}
+
+
+@app.post("/api/v2/projector/gesture")
+async def projector_gesture(request: GestureEvent) -> dict[str, str]:
+    await projector_hub.broadcast({"type": "gesture", "action": request.type, "x": request.x, "y": request.y, "scale": request.scale})
+    return {"status": "ok"}
+
+
+@app.post("/api/v2/assistant/confirm/{token}", response_model=CommandResponse)
+async def confirm_action(token: str) -> CommandResponse:
+    return await service.confirm_action(token)
+
+
+@app.post("/api/v2/audio/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)) -> dict[str, str]:
+    data = await file.read(15_000_001)
+    try:
+        return {"text": await audio.transcribe(data, file.filename or "audio.webm")}
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/v2/satellite/turn")
+async def satellite_turn(file: UploadFile = File(...), x_jarvis_token: str = Header(default="")) -> dict[str, str]:
+    if not settings.satellite_token or not secrets.compare_digest(x_jarvis_token, settings.satellite_token):
+        raise HTTPException(status_code=403, detail="Invalid satellite token")
+    transcript = await audio.transcribe(await file.read(15_000_001), file.filename or "audio.wav")
+    result = await service.handle_command(AssistantCommandRequest(text=transcript))
+    speech = await audio.speak(result.text, response_format="wav")
+    return {"transcript": transcript, "text": result.text, "audio_wav_base64": base64.b64encode(speech).decode("ascii")}
+
+
+@app.post("/api/v2/events/frigate/{event_id}")
+async def frigate_event(event_id: str, x_jarvis_token: str = Header(default="")):
+    if not settings.motion_webhook_token or not secrets.compare_digest(x_jarvis_token, settings.motion_webhook_token):
+        raise HTTPException(status_code=403, detail="Invalid event token")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", event_id):
+        raise HTTPException(status_code=400, detail="Invalid event ID")
+    return await ingest_frigate_event(event_id)
+
+
+@app.post("/api/v2/events/motion/{camera_name}")
+async def motion_event(camera_name: str, request: MotionEventRequest, x_jarvis_token: str = Header(default="")):
+    if not settings.motion_webhook_token or not secrets.compare_digest(x_jarvis_token, settings.motion_webhook_token):
+        raise HTTPException(status_code=403, detail="Invalid event token")
+    if not 0 <= request.before_delay_seconds <= 10 or not 0 <= request.after_delay_seconds <= 10:
+        raise HTTPException(status_code=400, detail="Delay must be between 0 and 10 seconds")
     try:
         return await service.handle_motion_event(
             camera_name=camera_name,
@@ -167,9 +314,41 @@ async def assistant_command(request: AssistantCommandRequest) -> CommandResponse
 
 @app.websocket("/ws/projector")
 async def projector_socket(websocket: WebSocket) -> None:
+    if not session_gate.valid_socket(websocket):
+        await websocket.close(code=1008)
+        return
     await projector_hub.connect(websocket)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         await projector_hub.disconnect(websocket)
+
+
+@app.websocket("/ws/voice")
+async def voice_socket(websocket: WebSocket) -> None:
+    if not session_gate.valid_socket(websocket):
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    try:
+        while True:
+            message = await websocket.receive_json()
+            if message.get("type") != "transcript":
+                await websocket.send_json({"type": "text", "text": "Send a transcript message."})
+                continue
+            await websocket.send_json({"type": "status", "state": "thinking"})
+            try:
+                result = await service.handle_command(AssistantCommandRequest(text=str(message.get("text", ""))))
+                await websocket.send_json({"type": "text", "text": result.text, "route": result.route, "confirmation_token": result.confirmation_token})
+                try:
+                    speech = await audio.speak(result.text)
+                    if speech:
+                        await websocket.send_json({"type": "audio", "data": base64.b64encode(speech).decode("ascii"), "text": result.text})
+                except Exception:
+                    await websocket.send_json({"type": "status", "state": "tts_unavailable"})
+            except Exception as exc:
+                await websocket.send_json({"type": "text", "text": f"Command failed: {exc}"})
+            await websocket.send_json({"type": "status", "state": "idle"})
+    except WebSocketDisconnect:
+        pass

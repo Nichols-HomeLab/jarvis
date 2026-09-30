@@ -63,6 +63,7 @@ body {
   display: flex;
   gap: 12px;
   align-items: flex-start;
+  flex-wrap: wrap;
 }
 
 .ghost-link,
@@ -97,6 +98,12 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
 }
+.hidden { display: none; }
+.scan-preview { position: relative; margin-top: 20px; width: min(100%, 960px); }
+.scan-preview img { display: block; width: 100%; height: auto; border-radius: 14px; }
+.scan-boxes { position: absolute; inset: 0; pointer-events: none; }
+.scan-box { position: absolute; border: 3px solid #55d3c7; box-shadow: 0 0 14px #55d3c780; }
+.scan-box span { position: absolute; top: -30px; left: 0; white-space: nowrap; padding: 4px 8px; background: #0b1117; border: 1px solid #55d3c7; border-radius: 6px; }
 
 .camera-card,
 .memory-card {
