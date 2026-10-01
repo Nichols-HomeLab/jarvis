@@ -1,162 +1,58 @@
-# Jarvis
+# Jarvis Workshop Assistant
 
-Local-first voice assistant for a desk, workshop, and outbuilding setup.
+A local workshop assistant with voice commands, Frigate camera capture, tool memory, a projector view, research, and controlled Home Assistant actions. The original macOS `server.py` remains in the repository for reference; the Docker stack runs `backend.main`.
 
-This repository currently contains the original Jarvis-style FastAPI + Vite voice assistant baseline, but the project direction for this fork is different: convert it from a macOS and cloud-dependent personal assistant into a self-hosted assistant that can listen, research, see through a Reolink camera, and project information onto a wall or desk.
+## Start
 
-## Project Direction
+1. Copy `.env.example` to `.env` and set a unique `JARVIS_ACCESS_TOKEN`, your actual Frigate URL, camera names, local model endpoints, and Home Assistant allowlist.
+2. Ensure Frigate, your OpenAI-compatible model server, and speech endpoints are reachable from Docker. The bundled SearXNG service handles web search.
+3. Run `docker compose up --build`.
 
-Target experience:
+Pages:
 
-- Voice-first interaction
-- Local or self-hosted model routing where possible
-- Browser-based projector display
-- Reolink snapshot vision
-- Home Assistant integration through safe backend tools
-- Future ESP32 mic/speaker satellites
-- Future hand-gesture interaction for projected objects
+- `http://localhost:5173/` for voice or typed commands and the orb
+- `http://localhost:5173/dashboard.html` for camera scans and memory lookup
+- `http://localhost:5173/projector.html` for cards, bounding boxes, and footprints
+- `http://localhost:5173/gestures.html` for a dedicated USB gesture camera
+- `http://localhost:8000/docs` for the API
 
-Example command:
+The browser uses push to talk. STT and TTS run through the endpoints configured in `.env`. A microphone normally requires localhost or HTTPS in the browser.
 
-> "Hey Jarvis, research a Dell R630 and project the size of it."
+## Example Flow
 
-## Implemented MVP Additions
+1. Say or type “Scan the pegboard.” Jarvis fetches `/<camera>/latest.jpg` from Frigate, analyzes the frame with the configured vision model, and stores detections in SQLite.
+2. Ask “Where are my screwdrivers?” Jarvis searches object memory, gives the last observed zone and time, and sends the stored image and box to the projector page.
+3. Ask “Research a Dell R630 and project its footprint.” Jarvis searches through SearXNG, asks the research model for sourced dimensions, and displays an outline. With projector measurements set to zero, this outline is explicitly illustrative.
 
-This repo now includes a parallel local-first MVP stack under [backend](</C:/Users/david/Documents/GitHub/jarvis/backend>) and new frontend pages in [frontend](</C:/Users/david/Documents/GitHub/jarvis/frontend>) for the workshop vision flow.
+## Configuration
 
-Implemented pieces:
+See [.env.example](.env.example) and [Operations](docs/operations.md). The main variables are `JARVIS_ACCESS_TOKEN`, `FRIGATE_URL`, `JARVIS_CAMERAS_JSON`, `OPENAI_BASE_URL`, `OPENAI_ROUTER_MODEL`, `OPENAI_VISION_MODEL`, `OPENAI_RESEARCH_MODEL`, `STT_BASE_URL`, `TTS_BASE_URL`, `HOME_ASSISTANT_URL`, `HOME_ASSISTANT_TOKEN`, and `HA_ALLOWED_ENTITIES`.
 
-- Env-driven local backend config
-- OpenAI-compatible model endpoint support
-- SQLite-backed tool and object memory
-- Camera snapshot capture for configured cameras
-- Vision scan endpoint for pegboard or workbench snapshots
-- Tool memory search endpoint
-- Projector websocket event stream
-- Projector page with bounding-box overlay rendering
-- Vision dashboard page for scans, searches, and command execution
-- Dockerfiles and `docker-compose.yml` for the new stack
+Frigate provides latest frames and event snapshots. Jarvis never needs direct camera credentials or RTSP access. The Home Assistant adapter only accepts explicitly allowed entity IDs; lock, cover, climate, and switch writes require a second confirmation. The LLM cannot supply an arbitrary URL or direct API call.
 
-Current MVP commands:
+## What Is Implemented
 
-- `Jarvis, scan the pegboard`
-- `Jarvis, scan the workbench`
-- `Jarvis, where are my screwdrivers?`
-- `Jarvis, show me where the screwdrivers are`
+- Frigate latest frame capture, completed event ingestion through optional MQTT, and event snapshots
+- Snapshot based tool detection through a vision model
+- SQLite tool locations and last seen lookup
+- Websocket projector cards, bounding boxes, and sourced dimension footprints
+- Local STT/TTS endpoint integration and browser push to talk
+- Small model routing, SearXNG research, and Home Assistant allowlist
+- Dedicated hand camera page with local MediaPipe model and pinch/drag events
+- HTTP satellite turn endpoint for a future push to talk ESP32 client
 
-## Current Repo Status
+## Physical Setup Still Needed
 
-Today, this repo is still much closer to the original implementation than the target system. The current codebase is centered around:
+The repo cannot know your camera addresses, entity IDs, model names, projector geometry, or ESP32 pinout. Populate `.env` and connect those devices before testing them. For physical size projection, measure the full displayed browser width and height on the surface and set `PROJECTOR_WIDTH_MM` and `PROJECTOR_HEIGHT_MM`. That simple linear scale does not correct keystone or perspective; do not claim exact physical size without a camera and projector calibration procedure.
 
-- FastAPI backend in [server.py](/C:/Users/david/Documents/GitHub/jarvis/server.py)
-- Vite/TypeScript frontend in [frontend](</C:/Users/david/Documents/GitHub/jarvis/frontend>)
-- WebSocket voice loop
-- Anthropic API for reasoning
-- Fish Audio for TTS
-- Apple Calendar, Mail, and Notes integrations
-- macOS-oriented automation and desktop awareness
+Object movement is recorded conservatively. A missing tool after motion is reported as a lost sighting, never as proof that a named person carried it or took it outside. The current system does not train a custom tool detector or continuously analyze video.
 
-That means this fork should be treated as a migration project, not as a finished outbuilding assistant.
+## Docs
 
-## Documentation Map
+- [Operations](docs/operations.md)
+- [Architecture](docs/target-architecture.md)
+- [Hardware and integrations](docs/hardware-and-integrations.md)
+- [Roadmap](docs/implementation-roadmap.md)
+- [Current state audit](docs/current-state-audit.md)
 
-- [Project Vision](</C:/Users/david/Documents/GitHub/jarvis/docs/project-vision.md>)
-- [Current State Audit](</C:/Users/david/Documents/GitHub/jarvis/docs/current-state-audit.md>)
-- [Target Architecture](</C:/Users/david/Documents/GitHub/jarvis/docs/target-architecture.md>)
-- [Hardware And Integrations](</C:/Users/david/Documents/GitHub/jarvis/docs/hardware-and-integrations.md>)
-- [Implementation Roadmap](</C:/Users/david/Documents/GitHub/jarvis/docs/implementation-roadmap.md>)
-- [Repo Refactor Plan](</C:/Users/david/Documents/GitHub/jarvis/docs/repo-refactor-plan.md>)
-
-## Recommended Build Strategy
-
-Do not try to jump directly to gesture-controlled true-size projection. The practical order for this repo is:
-
-1. Replace Anthropic with a local OpenAI-compatible model client.
-2. Replace Fish Audio with a local TTS engine.
-3. Stabilize the voice loop around local STT and TTS.
-4. Add a projector display page and projector event channel.
-5. Add web search as a backend tool.
-6. Add Reolink snapshot-based vision.
-7. Add Home Assistant read and control tools with safety levels.
-8. Add ESP32 satellite support.
-9. Add gesture interaction and calibration.
-
-## Baseline Local Development
-
-If you want to inspect or run the current baseline before refactoring it:
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-cd frontend
-npm install
-npm run dev
-```
-
-In a second terminal:
-
-```bash
-python server.py
-```
-
-This starts the current implementation, not the final local-first architecture described in the docs.
-
-## Docker Quick Start
-
-The new local-first MVP is intended to run with Docker Compose and a repo-root `.env`.
-
-1. Copy [.env.example](/C:/Users/david/Documents/GitHub/jarvis/.env.example) to `.env`.
-2. Set `OPENAI_BASE_URL` to your local OpenAI-compatible endpoint.
-3. Set `OPENAI_VISION_MODEL`, `OPENAI_ROUTER_MODEL`, and camera snapshot URLs.
-4. Start the stack:
-
-```bash
-docker compose up --build
-```
-
-Endpoints:
-
-- Frontend orb: `http://localhost:5173/`
-- Vision dashboard: `http://localhost:5173/dashboard.html`
-- Projector view: `http://localhost:5173/projector.html`
-- Local workshop API: `http://localhost:8000/api/v2/health`
-
-If you do not have a live vision model ready yet, keep `ALLOW_MOCK_VISION=true` so the scan pipeline still runs without hard-failing.
-
-## Immediate Repo Priorities
-
-- Break the monolithic backend into clearer modules.
-- Introduce config for multiple model backends.
-- Separate current macOS-specific actions from future local/self-hosted tools.
-- Add `docs/` as the source of truth for the migration.
-- Keep the orb UI, WebSocket pattern, and general action/tool architecture where they still fit.
-
-## Constraints To Respect
-
-- The LLM should not directly control hardware.
-- Every hardware or service action should go through validated backend tools.
-- Dangerous actions must require confirmation.
-- Reolink vision should start with snapshots, not continuous live video to an LLM.
-- The first projector implementation can be visually approximate before calibration.
-
-## What To Keep From This Repo
-
-- FastAPI backend pattern
-- Browser frontend pattern
-- WebSocket communication model
-- Voice assistant interaction loop
-- Orb-based assistant presentation
-- Memory and action concepts where they still fit
-
-## What To Replace
-
-- Anthropic-specific reasoning calls
-- Fish Audio TTS
-- Apple Calendar, Mail, and Notes assumptions
-- macOS desktop control as a core feature
-- Claude Code oriented task flow as the center of the product
-
-## License
-
-See [LICENSE](/C:/Users/david/Documents/GitHub/jarvis/LICENSE).
+See [LICENSE](LICENSE) for licensing.
