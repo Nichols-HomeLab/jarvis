@@ -14,7 +14,7 @@ Implication:
 
 ### Camera
 
-- Reolink camera
+- Frigate managing the workshop cameras (which may include Reolink hardware)
 
 Recommended first use:
 
@@ -52,18 +52,18 @@ Role:
 - Receive TTS audio back
 - Not run the LLM locally
 
-## Reolink Integration Direction
+## Frigate Integration
 
-Planned functions:
+Implemented functions:
 
-- `get_reolink_snapshot(camera="outbuilding")`
-- `get_reolink_recent_clip(camera="outbuilding", seconds=10)`
-- `describe_camera_scene(camera="outbuilding")`
-- `find_object_on_camera(camera="outbuilding", object="multimeter")`
+- `capture_snapshot(camera="pegboard")` through Frigate's latest frame API
+- `frigate_event(event_id)` through Frigate's event snapshot API
+- `scan_camera(camera="workbench")` using the local vision model
+- `search_tool_memory(query="multimeter")` against SQLite
 
-First milestone:
+Current milestone:
 
-- Single snapshot request and vision description
+- Single snapshot request, structured detections, and last-seen lookup
 
 ## Home Assistant Integration Direction
 

@@ -24,7 +24,7 @@
       +-------------+-------------+-------------+-------------+
       |             |             |             |             |
       v             v             v             v             v
- [Web Search]   [Projector]   [Reolink]   [Home Assistant] [Memory]
+ [SearXNG]      [Projector]    [Frigate]    [Home Assistant] [Memory]
 ```
 
 ## Core Architectural Rules
@@ -62,7 +62,7 @@ backend/
   tools/
     web_search.py
     projector.py
-    reolink.py
+    frigate.py
     home_assistant.py
     memory.py
 
@@ -112,7 +112,7 @@ Use for:
 
 Use for:
 
-- Reolink snapshot analysis
+- Frigate latest-frame and event-snapshot analysis
 - Object lookup in still images
 - Desk and workbench scene descriptions
 
@@ -122,7 +122,7 @@ Representative tool surface:
 
 ```text
 web_search(query)
-get_reolink_snapshot(camera)
+get_frigate_snapshot(camera)
 describe_camera_scene(camera)
 project_card(title, content, layout)
 project_image(path_or_url)
@@ -137,7 +137,7 @@ speak(text)
 The projector should be a fullscreen browser view, for example:
 
 ```text
-http://jarvis.local/projector
+http://jarvis.local/projector.html
 ```
 
 The backend should publish display events over WebSocket. The page renders:

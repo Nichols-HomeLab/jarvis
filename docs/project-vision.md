@@ -14,7 +14,7 @@ Jarvis should eventually be able to:
 - Convert audio to text locally
 - Route requests to the right model and toolchain
 - Search the web when needed
-- Use a Reolink camera for visual context
+- Use Frigate to capture local camera frames and event snapshots
 - Project cards, diagrams, and object outlines onto a wall or desk
 - Integrate with Home Assistant
 - Support future ESP32 mic/speaker satellites

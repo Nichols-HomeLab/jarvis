@@ -4,12 +4,13 @@ This folder defines the target direction for the local-first Jarvis fork.
 
 ## Files
 
-- [Project Vision](</C:/Users/david/Documents/GitHub/jarvis/docs/project-vision.md>)
-- [Current State Audit](</C:/Users/david/Documents/GitHub/jarvis/docs/current-state-audit.md>)
-- [Target Architecture](</C:/Users/david/Documents/GitHub/jarvis/docs/target-architecture.md>)
-- [Hardware And Integrations](</C:/Users/david/Documents/GitHub/jarvis/docs/hardware-and-integrations.md>)
-- [Implementation Roadmap](</C:/Users/david/Documents/GitHub/jarvis/docs/implementation-roadmap.md>)
-- [Repo Refactor Plan](</C:/Users/david/Documents/GitHub/jarvis/docs/repo-refactor-plan.md>)
+- [Project Vision](project-vision.md)
+- [Current State Audit](current-state-audit.md)
+- [Target Architecture](target-architecture.md)
+- [Hardware And Integrations](hardware-and-integrations.md)
+- [Implementation Roadmap](implementation-roadmap.md)
+- [Repo Refactor Plan](repo-refactor-plan.md)
+- [Operations](operations.md)
 
 ## How To Use These Docs
 
