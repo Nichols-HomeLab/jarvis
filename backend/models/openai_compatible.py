@@ -5,6 +5,8 @@ import json
 from typing import Any
 
 import httpx
+from PIL import Image
+from io import BytesIO
 
 from backend.schemas import ScanResult
 
@@ -20,13 +22,16 @@ class OpenAICompatibleClient:
 
     async def analyze_snapshot(self, camera: str, zone: str, image_bytes: bytes, snapshot_path: str) -> ScanResult:
         if not self.base_url:
-            return self._mock_scan(camera, zone, snapshot_path)
+            raise RuntimeError("OPENAI_BASE_URL is not configured")
+
+        with Image.open(BytesIO(image_bytes)) as picture:
+            width, height = picture.size
 
         prompt = (
             "You are a workshop vision assistant. Analyze the image and identify visible tools or hardware.\n"
             "Return strict JSON with keys: summary, detections.\n"
             "Each detection must include label, description, box, confidence.\n"
-            "The box format is [x1, y1, x2, y2] in image pixels.\n"
+            f"Image size is {width}x{height}. The box format is [x1, y1, x2, y2] in image pixels.\n"
             "Use an empty detections list if nothing confident is visible."
         )
 
@@ -68,11 +73,18 @@ class OpenAICompatibleClient:
             raise
 
         parsed = self._parse_json_content(content)
+        detections = []
+        for candidate in parsed.get("detections", []):
+            box = candidate.get("box", [])
+            if len(box) != 4:
+                continue
+            candidate["box"] = [max(0, min(round(float(box[i])), width if i % 2 == 0 else height)) for i in range(4)]
+            detections.append(candidate)
         return ScanResult(
             camera=camera,
             zone=zone,
             summary=str(parsed.get("summary", "")),
-            detections=parsed.get("detections", []),
+            detections=detections,
             raw_model_output=parsed,
             snapshot_path=snapshot_path,
         )
@@ -85,11 +97,21 @@ class OpenAICompatibleClient:
 
         text = text.strip()
         if text.startswith("```"):
-            text = text.strip("`")
-            _, _, text = text.partition("\n")
-            if text.endswith("```"):
-                text = text[:-3]
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         return json.loads(text)
+
+    async def chat(self, model: str, messages: list[dict[str, str]], json_mode: bool = False) -> str:
+        payload: dict[str, Any] = {"model": model, "messages": messages, "temperature": 0.1}
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json=payload,
+            )
+            response.raise_for_status()
+            return str(response.json()["choices"][0]["message"]["content"])
 
     def _mock_scan(self, camera: str, zone: str, snapshot_path: str) -> ScanResult:
         return ScanResult(

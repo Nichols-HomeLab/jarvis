@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-
-import httpx
+import uuid
 
 from backend.config import CameraConfig
 from backend.schemas import CameraSnapshot
+from backend.vision.frigate import FrigateClient
 
 
 class CameraManager:
-    def __init__(self, cameras: list[CameraConfig], snapshot_dir: Path):
+    def __init__(self, cameras: list[CameraConfig], snapshot_dir: Path, frigate: FrigateClient):
         self._cameras = {camera.name: camera for camera in cameras if camera.enabled}
         self.snapshot_dir = snapshot_dir
+        self.frigate = frigate
 
     def list_cameras(self) -> list[CameraConfig]:
         return list(self._cameras.values())
@@ -25,11 +26,7 @@ class CameraManager:
 
     async def capture_snapshot(self, camera_name: str) -> CameraSnapshot:
         camera = self.get_camera(camera_name)
-        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
-            response = await client.get(camera.snapshot_url, auth=(camera.username, camera.password) if camera.username else None)
-            response.raise_for_status()
-
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        target = self.snapshot_dir / f"{camera_name}_{timestamp}.jpg"
-        target.write_bytes(response.content)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        target = self.snapshot_dir / f"{camera_name}_{timestamp}_{uuid.uuid4().hex[:8]}.jpg"
+        target.write_bytes(await self.frigate.latest_frame(camera.frigate_name or camera.name))
         return CameraSnapshot(camera=camera_name, snapshot_path=target.as_posix())
