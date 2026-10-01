@@ -8,6 +8,7 @@
   </head>
   <body>
     <main id="projector-app">
+      <div id="calibration-corners" class="calibration-corners hidden" aria-hidden="true"><span class="tl">TL</span><span class="tr">TR</span><span class="br">BR</span><span class="bl">BL</span></div>
       <div class="projector-header">
         <div>
           <div class="eyebrow">Jarvis Projector</div>
@@ -26,6 +27,14 @@
           <img id="bbox-image" alt="Projector snapshot" />
           <div id="bbox-overlay" class="bbox-overlay"></div>
         </div>
+      </section>
+      <section id="dimension-view" class="dimension-view hidden">
+        <div id="dimension-object" class="dimension-object">
+          <span id="dimension-name"></span>
+          <span id="dimension-measurements"></span>
+        </div>
+        <p id="dimension-note"></p>
+        <a id="dimension-source" target="_blank" rel="noopener noreferrer"></a>
       </section>
     </main>
     <script type="module" src="/src/projector.ts"></script>

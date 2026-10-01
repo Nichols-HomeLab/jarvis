@@ -3,38 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>JARVIS</title>
-    <link rel="stylesheet" href="/src/style.css" />
+    <title>Jarvis Workshop</title>
   </head>
   <body>
-    <canvas id="orb-canvas"></canvas>
-
-    <!-- Minimal controls — top right -->
-    <div id="controls">
-      <button id="btn-mute" title="Mute/Unmute">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-          <line x1="12" y1="19" x2="12" y2="23"/>
-        </svg>
-      </button>
-      <button id="btn-menu" title="Menu">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>
-        </svg>
-      </button>
-    </div>
-
-    <!-- Dropdown menu -->
-    <div id="menu-dropdown" style="display:none">
-      <button id="btn-settings">Settings</button>
-      <button id="btn-restart">Restart Server</button>
-      <button id="btn-fix-self">Fix Yourself</button>
-    </div>
-
-    <div id="status-text"></div>
-    <div id="jarvis-label">JARVIS</div>
-    <div id="error-text"></div>
+    <main class="shell">
+      <header><span class="eyebrow">Local Workshop Assistant</span><nav><a href="/dashboard.html">Vision</a><a href="/projector.html">Projector</a><a href="/gestures.html">Gestures</a></nav></header>
+      <div class="orb-shell"><canvas id="orb-canvas"></canvas></div>
+      <section class="conversation">
+        <h1>Jarvis</h1>
+        <p id="status-text" aria-live="polite">ready</p>
+        <div id="transcript" class="transcript"></div>
+        <div id="reply" class="reply" aria-live="polite"></div>
+        <button id="confirm-button" type="button" hidden>Confirm action</button>
+        <button id="record-button" type="button">Record command</button>
+        <form id="command-form"><input id="command-input" aria-label="Command" placeholder="Ask about a tool, a camera, or a project..." /><button type="submit">Send</button></form>
+        <small>Click once to start recording and again to stop. Speech uses the configured local endpoint.</small>
+      </section>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -20,13 +20,14 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
   let destroyed = false;
   const N = 2000;
 
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(0x050508, 1);
+  const size = () => ({ width: canvas.clientWidth || window.innerWidth, height: canvas.clientHeight || window.innerHeight });
+  renderer.setSize(size().width, size().height);
+  renderer.setClearColor(0x050508, 0);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 1000);
+  const camera = new THREE.PerspectiveCamera(45, size().width / size().height, 1, 1000);
   camera.position.z = 80;
 
   // ── Particles ──
@@ -314,9 +315,9 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
   }
 
   function onResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.aspect = size().width / size().height;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(size().width, size().height);
   }
 
   window.addEventListener("resize", onResize);

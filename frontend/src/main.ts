@@ -1,235 +1,119 @@
-/**
- * JARVIS — Main entry point.
- *
- * Wires together the orb visualization, WebSocket communication,
- * speech recognition, and audio playback into a single experience.
- */
-
 import { createOrb, type OrbState } from "./orb";
-import { createVoiceInput, createAudioPlayer } from "./voice";
+import { createAudioPlayer } from "./voice";
 import { createSocket } from "./ws";
-import { openSettings, checkFirstTimeSetup } from "./settings";
-import "./style.css";
+import { requireSession } from "./auth";
+import "./local.css";
 
-// ---------------------------------------------------------------------------
-// State machine
-// ---------------------------------------------------------------------------
+await requireSession();
 
 type State = "idle" | "listening" | "thinking" | "speaking";
-let currentState: State = "idle";
-let isMuted = false;
-
-const statusEl = document.getElementById("status-text")!;
-const errorEl = document.getElementById("error-text")!;
-
-function showError(msg: string) {
-  errorEl.textContent = msg;
-  errorEl.style.opacity = "1";
-  setTimeout(() => {
-    errorEl.style.opacity = "0";
-  }, 5000);
-}
-
-function updateStatus(state: State) {
-  const labels: Record<State, string> = {
-    idle: "",
-    listening: "listening...",
-    thinking: "thinking...",
-    speaking: "",
-  };
-  statusEl.textContent = labels[state];
-}
-
-// ---------------------------------------------------------------------------
-// Init components
-// ---------------------------------------------------------------------------
-
-const canvas = document.getElementById("orb-canvas") as HTMLCanvasElement;
-const orb = createOrb(canvas);
-
+const orb = createOrb(document.getElementById("orb-canvas") as HTMLCanvasElement);
+const player = createAudioPlayer();
+orb.setAnalyser(player.getAnalyser());
+const status = document.getElementById("status-text") as HTMLDivElement;
+const transcript = document.getElementById("transcript") as HTMLDivElement;
+const reply = document.getElementById("reply") as HTMLDivElement;
+const confirmButton = document.getElementById("confirm-button") as HTMLButtonElement;
+let confirmationToken = "";
+const recordButton = document.getElementById("record-button") as HTMLButtonElement;
+const form = document.getElementById("command-form") as HTMLFormElement;
+const input = document.getElementById("command-input") as HTMLInputElement;
 const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
-const WS_URL = `${wsProto}//${window.location.host}/ws/voice`;
-const socket = createSocket(WS_URL);
+const socket = createSocket(`${wsProto}//${window.location.host}/ws/voice`);
+let recorder: MediaRecorder | null = null;
+let stream: MediaStream | null = null;
+let chunks: Blob[] = [];
 
-const audioPlayer = createAudioPlayer();
-orb.setAnalyser(audioPlayer.getAnalyser());
-
-function transition(newState: State) {
-  if (newState === currentState) return;
-  currentState = newState;
-  orb.setState(newState as OrbState);
-  updateStatus(newState);
-
-  switch (newState) {
-    case "idle":
-      if (!isMuted) voiceInput.resume();
-      break;
-    case "listening":
-      if (!isMuted) voiceInput.resume();
-      break;
-    case "thinking":
-      voiceInput.pause();
-      break;
-    case "speaking":
-      voiceInput.pause();
-      break;
-  }
+function state(next: State, label: string = next) {
+  orb.setState(next as OrbState);
+  status.textContent = label;
 }
 
-// ---------------------------------------------------------------------------
-// Voice input
-// ---------------------------------------------------------------------------
-
-const voiceInput = createVoiceInput(
-  (text: string) => {
-    // Cancel any current JARVIS response before sending new input
-    audioPlayer.stop();
-    // User spoke — send transcript
-    socket.send({ type: "transcript", text, isFinal: true });
-    transition("thinking");
-  },
-  (msg: string) => {
-    showError(msg);
+function submit(text: string) {
+  const cleaned = text.trim().replace(/^hey jarvis[,\s]*/i, "");
+  if (!cleaned) return;
+  if (!socket.isConnected()) {
+    reply.textContent = "Voice socket is reconnecting. Please try again.";
+    state("idle");
+    return;
   }
-);
-
-// ---------------------------------------------------------------------------
-// Audio playback finished
-// ---------------------------------------------------------------------------
-
-audioPlayer.onFinished(() => {
-  transition("idle");
-});
-
-// ---------------------------------------------------------------------------
-// WebSocket messages
-// ---------------------------------------------------------------------------
-
-socket.onMessage((msg) => {
-  const type = msg.type as string;
-
-  if (type === "audio") {
-    const audioData = msg.data as string;
-    console.log("[audio] received", audioData ? `${audioData.length} chars` : "EMPTY", "state:", currentState);
-    if (audioData) {
-      if (currentState !== "speaking") {
-        transition("speaking");
-      }
-      audioPlayer.enqueue(audioData);
-    } else {
-      // TTS failed — no audio but still need to return to idle
-      console.warn("[audio] no data received, returning to idle");
-      transition("idle");
-    }
-    // Log text for debugging
-    if (msg.text) console.log("[JARVIS]", msg.text);
-  } else if (type === "status") {
-    const state = msg.state as string;
-    if (state === "thinking" && currentState !== "thinking") {
-      transition("thinking");
-    } else if (state === "working") {
-      // Task spawned — show thinking with a different label
-      transition("thinking");
-      statusEl.textContent = "working...";
-    } else if (state === "idle") {
-      transition("idle");
-    }
-  } else if (type === "text") {
-    // Text fallback when TTS fails
-    console.log("[JARVIS]", msg.text);
-  } else if (type === "task_spawned") {
-    console.log("[task]", "spawned:", msg.task_id, msg.prompt);
-  } else if (type === "task_complete") {
-    console.log("[task]", "complete:", msg.task_id, msg.status, msg.summary);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Kick off
-// ---------------------------------------------------------------------------
-
-// Start listening after a brief delay for the orb to render
-setTimeout(() => {
-  voiceInput.start();
-  transition("listening");
-}, 1000);
-
-// Resume AudioContext on ANY user interaction (browser autoplay policy)
-function ensureAudioContext() {
-  const ctx = audioPlayer.getAnalyser().context as AudioContext;
-  if (ctx.state === "suspended") {
-    ctx.resume().then(() => console.log("[audio] context resumed"));
-  }
+  transcript.textContent = cleaned;
+  reply.textContent = "";
+  confirmButton.hidden = true;
+  confirmationToken = "";
+  player.stop();
+  socket.send({ type: "transcript", text: cleaned });
+  state("thinking");
 }
-document.addEventListener("click", ensureAudioContext);
-document.addEventListener("touchstart", ensureAudioContext);
-document.addEventListener("keydown", ensureAudioContext, { once: true });
 
-// Try to resume audio context on load
-ensureAudioContext();
+form.addEventListener("submit", event => {
+  event.preventDefault();
+  submit(input.value);
+  input.value = "";
+});
 
-// ---------------------------------------------------------------------------
-// UI Controls
-// ---------------------------------------------------------------------------
-
-const btnMute = document.getElementById("btn-mute")!;
-const btnMenu = document.getElementById("btn-menu")!;
-const menuDropdown = document.getElementById("menu-dropdown")!;
-const btnRestart = document.getElementById("btn-restart")!;
-const btnFixSelf = document.getElementById("btn-fix-self")!;
-
-btnMute.addEventListener("click", (e) => {
-  e.stopPropagation();
-  isMuted = !isMuted;
-  btnMute.classList.toggle("muted", isMuted);
-  if (isMuted) {
-    voiceInput.pause();
-    transition("idle");
-  } else {
-    voiceInput.resume();
-    transition("listening");
+recordButton.addEventListener("click", async () => {
+  if (recorder?.state === "recording") {
+    recorder.stop();
+    recordButton.textContent = "Processing...";
+    recordButton.disabled = true;
+    return;
   }
-});
-
-btnMenu.addEventListener("click", (e) => {
-  e.stopPropagation();
-  menuDropdown.style.display = menuDropdown.style.display === "none" ? "block" : "none";
-});
-
-document.addEventListener("click", () => {
-  menuDropdown.style.display = "none";
-});
-
-btnRestart.addEventListener("click", async (e) => {
-  e.stopPropagation();
-  menuDropdown.style.display = "none";
-  statusEl.textContent = "restarting...";
   try {
-    await fetch("/api/restart", { method: "POST" });
-    // Wait a few seconds then reload
-    setTimeout(() => window.location.reload(), 4000);
-  } catch {
-    statusEl.textContent = "restart failed";
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(type => MediaRecorder.isTypeSupported(type));
+    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    chunks = [];
+    recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+    recorder.onstop = async () => {
+      stream?.getTracks().forEach(track => track.stop());
+      const data = new FormData();
+      data.append("file", new Blob(chunks, { type: recorder?.mimeType || "audio/webm" }), "command.webm");
+      try {
+        const response = await fetch("/api/v2/audio/transcribe", { method: "POST", body: data });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || "Transcription failed");
+        submit(body.text);
+      } catch (error) {
+        reply.textContent = String(error);
+        state("idle");
+      } finally {
+        recordButton.disabled = false;
+        recordButton.textContent = "Record command";
+      }
+    };
+    recorder.start();
+    recordButton.textContent = "Stop recording";
+    state("listening", "recording...");
+  } catch (error) {
+    reply.textContent = `Microphone error: ${error}`;
+    state("idle");
   }
 });
 
-btnFixSelf.addEventListener("click", (e) => {
-  e.stopPropagation();
-  menuDropdown.style.display = "none";
-  // Activate work mode on the WebSocket session (JARVIS becomes Claude Code's voice)
-  socket.send({ type: "fix_self" });
-  statusEl.textContent = "entering work mode...";
+socket.onMessage(msg => {
+  if (msg.type === "status") {
+    if (msg.state === "thinking") state("thinking");
+    if (msg.state === "idle" && !reply.textContent) state("idle");
+  } else if (msg.type === "text") {
+    reply.textContent = String(msg.text || "");
+    if (msg.confirmation_token) {
+      confirmationToken = String(msg.confirmation_token);
+      confirmButton.hidden = false;
+    }
+    state("idle");
+  } else if (msg.type === "audio" && msg.data) {
+    state("speaking");
+    player.enqueue(String(msg.data));
+  }
 });
-
-// Settings button
-const btnSettings = document.getElementById("btn-settings")!;
-btnSettings.addEventListener("click", (e) => {
-  e.stopPropagation();
-  menuDropdown.style.display = "none";
-  openSettings();
+confirmButton.addEventListener("click", async () => {
+  confirmButton.hidden = true;
+  const token = confirmationToken;
+  confirmationToken = "";
+  const response = await fetch(`/api/v2/assistant/confirm/${encodeURIComponent(token)}`, { method: "POST" });
+  const body = await response.json();
+  reply.textContent = body.text || body.detail || "Confirmation failed";
 });
-
-// First-time setup detection — check after a short delay for server readiness
-setTimeout(() => {
-  checkFirstTimeSetup();
-}, 2000);
+player.onFinished(() => state("idle"));
+state("idle", "ready");

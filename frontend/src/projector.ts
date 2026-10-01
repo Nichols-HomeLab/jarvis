@@ -1,4 +1,7 @@
 import { createSocket } from "./ws";
+import { requireSession } from "./auth";
+
+await requireSession();
 
 type DetectionBox = {
   label: string;
@@ -19,7 +22,18 @@ type ProjectorMessage =
       title: string;
       content: string;
       kind: string;
-    };
+    }
+  | {
+      type: "show_dimensions";
+      title: string;
+      width_mm: number;
+      depth_mm: number;
+      height_mm?: number;
+      source: string;
+      calibrated_width_mm: number;
+      calibrated_height_mm: number;
+    }
+  | { type: "gesture"; x: number; y: number; scale: number; [key: string]: unknown };
 
 const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
 const socket = createSocket(`${wsProto}//${window.location.host}/ws/projector`);
@@ -32,12 +46,20 @@ const cardContent = document.getElementById("card-content") as HTMLDivElement;
 const bboxView = document.getElementById("bbox-view") as HTMLDivElement;
 const bboxImage = document.getElementById("bbox-image") as HTMLImageElement;
 const bboxOverlay = document.getElementById("bbox-overlay") as HTMLDivElement;
+if (new URLSearchParams(window.location.search).has("calibrate")) document.getElementById("calibration-corners")?.classList.remove("hidden");
+const dimensionView = document.getElementById("dimension-view") as HTMLDivElement;
+const dimensionObject = document.getElementById("dimension-object") as HTMLDivElement;
+const dimensionName = document.getElementById("dimension-name") as HTMLSpanElement;
+const dimensionMeasurements = document.getElementById("dimension-measurements") as HTMLSpanElement;
+const dimensionNote = document.getElementById("dimension-note") as HTMLParagraphElement;
+const dimensionSource = document.getElementById("dimension-source") as HTMLAnchorElement;
 
 let latestBoxes: DetectionBox[] = [];
 
 function hideAll() {
   cardView.classList.add("hidden");
   bboxView.classList.add("hidden");
+  dimensionView.classList.add("hidden");
 }
 
 function renderBoxes() {
@@ -73,6 +95,17 @@ socket.onMessage((raw) => {
   const msg = raw as unknown as ProjectorMessage;
   statusEl.textContent = socket.isConnected() ? "connected" : "updating";
 
+  if (msg.type === "gesture") {
+    const action = String(msg["type"] === "gesture" ? msg["action"] || msg["gesture"] || "" : "");
+    if (action === "move" || action === "grab") {
+      dimensionObject.style.left = `${msg.x * 100}%`;
+      dimensionObject.style.top = `${msg.y * 100}%`;
+    }
+    if (action === "scale") dimensionObject.style.transform = `translate(-50%, -50%) scale(${msg.scale})`;
+    if (action === "clear") hideAll();
+    return;
+  }
+
   if (msg.type === "show_card") {
     hideAll();
     titleEl.textContent = msg.title;
@@ -88,7 +121,43 @@ socket.onMessage((raw) => {
     latestBoxes = msg.boxes;
     bboxImage.src = msg.image;
     bboxView.classList.remove("hidden");
+    return;
   }
+
+  if (msg.type === "show_dimensions") {
+    hideAll();
+    titleEl.textContent = msg.title;
+    dimensionName.textContent = msg.title;
+    dimensionMeasurements.textContent = `${msg.width_mm} mm x ${msg.depth_mm} mm${msg.height_mm ? ` x ${msg.height_mm} mm high` : ""}`;
+    const calibrated = msg.calibrated_width_mm > 0 && msg.calibrated_height_mm > 0;
+    if (calibrated) {
+      dimensionObject.style.width = `${msg.width_mm / msg.calibrated_width_mm * window.innerWidth}px`;
+      dimensionObject.style.height = `${msg.depth_mm / msg.calibrated_height_mm * window.innerHeight}px`;
+      dimensionNote.textContent = "Physical scale uses configured projector width and height. Verify with a ruler before relying on it.";
+    } else {
+      dimensionObject.style.width = "min(68vw, 680px)";
+      dimensionObject.style.height = "min(36vh, 300px)";
+      dimensionNote.textContent = "Illustrative scale. Set PROJECTOR_WIDTH_MM and PROJECTOR_HEIGHT_MM for physical size.";
+    }
+    dimensionObject.style.left = "50%";
+    dimensionObject.style.top = "50%";
+    dimensionObject.style.transform = "translate(-50%, -50%)";
+    dimensionSource.textContent = msg.source;
+    dimensionSource.href = msg.source;
+    dimensionView.classList.remove("hidden");
+  }
+});
+
+let dragging = false;
+dimensionObject.addEventListener("pointerdown", event => {
+  dragging = true;
+  dimensionObject.setPointerCapture(event.pointerId);
+});
+dimensionObject.addEventListener("pointerup", () => { dragging = false; });
+dimensionObject.addEventListener("pointermove", event => {
+  if (!dragging) return;
+  dimensionObject.style.left = `${event.clientX / window.innerWidth * 100}%`;
+  dimensionObject.style.top = `${event.clientY / window.innerHeight * 100}%`;
 });
 
 window.setInterval(() => {

@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Jarvis Gesture Camera</title><link rel="stylesheet" href="/src/dashboard.css"></head>
+<body><main class="dashboard"><header class="hero"><div><div class="eyebrow">Projector Control</div><h1>Gesture Camera</h1><p>Point a dedicated USB camera at the desk. Calibrate the projection corners, then pinch to grab and move an outline.</p></div><a class="ghost-link" href="/projector.html">Projector</a></header><section class="panel"><button id="start-gestures">Start camera</button><button id="stop-gestures" disabled>Stop</button><button id="calibrate-gestures">Calibrate corners</button><p id="gesture-status" aria-live="polite">Camera idle</p><video id="gesture-video" autoplay muted playsinline style="max-width:100%;border-radius:18px;cursor:crosshair"></video></section></main><script type="module" src="/src/gestures.ts"></script></body>
+</html>

@@ -121,3 +121,17 @@ body {
   font-size: 0.9rem;
   white-space: nowrap;
 }
+
+.dimension-view { position: relative; height: calc(100vh - 140px); overflow: hidden; }
+.dimension-object { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); border: 3px solid #5ddcc2; background: rgba(72, 209, 178, .16); box-shadow: 0 0 60px rgba(93, 220, 194, .26); border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 12px; cursor: grab; touch-action: none; }
+.dimension-object:active { cursor: grabbing; }
+#dimension-name { font-size: clamp(1rem, 2vw, 2rem); font-weight: bold; }
+#dimension-measurements { color: #b3e8d6; }
+#dimension-note { position: absolute; bottom: 38px; left: 0; color: #b7d2ca; }
+#dimension-source { position: absolute; bottom: 10px; left: 0; color: #7cc8e9; font-size: .8rem; }
+.calibration-corners { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+.calibration-corners span { position: absolute; width: 55px; height: 55px; display: grid; place-items: center; border: 3px solid #ffcf75; color: #ffcf75; background: #06151dcc; }
+.calibration-corners .tl { top: 0; left: 0; }
+.calibration-corners .tr { top: 0; right: 0; }
+.calibration-corners .br { bottom: 0; right: 0; }
+.calibration-corners .bl { bottom: 0; left: 0; }

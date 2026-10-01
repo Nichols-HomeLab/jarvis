@@ -1,0 +1,22 @@
+:root { color-scheme: dark; font-family: "Trebuchet MS", "Segoe UI", sans-serif; background: #081217; color: #e9f3ee; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 49% 25%, #234c4a 0, #10242a 32%, #081217 70%); }
+.shell { min-height: 100vh; max-width: 1440px; margin: auto; padding: 28px clamp(20px, 5vw, 80px); display: grid; grid-template-columns: 1fr 1.15fr; grid-template-rows: auto 1fr; align-items: center; gap: 24px; }
+header { grid-column: 1 / -1; width: 100%; display: flex; justify-content: space-between; align-items: center; }
+.eyebrow { color: #69d5be; font-size: .8rem; text-transform: uppercase; letter-spacing: .2em; }
+nav { display: flex; gap: 20px; }
+a { color: #c5eadd; text-decoration: none; }
+.orb-shell { width: min(36vw, 430px); height: min(36vw, 430px); min-width: 220px; min-height: 220px; position: relative; justify-self: center; }
+#orb-canvas { width: 100%; height: 100%; display: block; }
+.conversation { width: min(100%, 700px); text-align: left; margin: 0 auto; }
+h1 { font-size: clamp(3rem, 7vw, 5rem); letter-spacing: -.06em; margin: 0; }
+#status-text { color: #71d9ba; text-transform: uppercase; letter-spacing: .16em; font-size: .85rem; }
+.transcript { color: #95b6ad; min-height: 24px; }
+.reply { min-height: 64px; padding: 18px 0; font-size: 1.2rem; line-height: 1.45; }
+button { cursor: pointer; border: 1px solid #72c6b0; color: #ecfff7; background: #16463e; padding: 13px 22px; border-radius: 999px; font: inherit; }
+button:disabled { opacity: .5; cursor: wait; }
+form { display: flex; gap: 10px; margin: 24px 0 16px; }
+input { flex: 1; min-width: 0; padding: 14px 16px; border: 1px solid #35594f; background: #0b1e20; border-radius: 14px; color: #f3fff8; font: inherit; }
+small { color: #8badab; }
+@media(max-width: 800px) { .shell { display: flex; flex-direction: column; gap: 12px; } .orb-shell { width: min(54vw, 300px); height: min(54vw, 300px); } .conversation { text-align: center; } }
+@media(max-width: 600px) { form { flex-direction: column; } nav { gap: 10px; } }
