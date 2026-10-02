@@ -1,5 +1,7 @@
 # Operations
 
+See [Bifrost, Frigate, and Homebox Inventory](bifrost-homebox-inventory.md) for the automatic scanning and box-contents workflow.
+
 ## Access Control
 
 Set `JARVIS_ACCESS_TOKEN` to a unique random value of at least 32 characters before starting the backend. Each browser page prompts for it once and receives an HTTP-only, one-day session cookie. API, media, and WebSocket access require that session. Configure `CORS_ORIGINS` with the exact browser origins used from other hosts, including scheme and port. Frigate webhooks and satellites use their separate `MOTION_WEBHOOK_TOKEN` and `SATELLITE_TOKEN`, not the browser token. Do not expose the Vite development server or the Frigate/MQTT endpoints to the public internet; use a trusted LAN or a TLS reverse proxy. Change the access token to invalidate all browser sessions.
@@ -14,13 +16,13 @@ For automatic event ingestion, set `MQTT_HOST` and optionally `MQTT_USER`, `MQTT
 
 ## Models And Voice
 
-`OPENAI_BASE_URL` points at an OpenAI-compatible `/v1` endpoint. Configure the router, research, and vision model IDs separately. Vision requires image input support. Responses that cannot be parsed or validated fail the scan; mock vision is disabled by default.
+`BIFROST_BASE_URL` must point at a reachable Bifrost OpenAI-compatible endpoint. Jarvis refuses to start if it or any of the three Bifrost model routes is missing; legacy `OPENAI_*` settings no longer select another provider. The cluster's internal route is `http://bifrost.external.svc.cluster.local:8080/openai`, not `/v1`; it cannot be used directly from local Docker Desktop. Configure `BIFROST_API_KEY` when needed, and set the router, research, and vision model IDs separately. Vision requires image input support. Responses that cannot be parsed or validated fail the scan; mock vision is disabled by default.
 
 `STT_BASE_URL` must serve `POST /audio/transcriptions`. `TTS_BASE_URL` must serve `POST /audio/speech`, including MP3 for the browser and WAV for satellites. These endpoints can be separate local services. If they are not configured, typed commands still work and the browser receives text responses.
 
 ## Web And Home Assistant
 
-The included SearXNG container serves JSON search results to the backend. The assistant sends short snippets to the research model and includes source URLs. Research results should be checked before using dimensions to make a physical fit decision.
+The included SearXNG container serves JSON search and image results to the backend. Camera images stay on the local model path; only a text description is used for image search. The assistant sends short snippets to the research model and includes source URLs. Research results should be checked before using dimensions to make a physical fit decision.
 
 Set `HOME_ASSISTANT_URL`, `HOME_ASSISTANT_TOKEN`, and an exact comma-separated `HA_ALLOWED_ENTITIES` list. Unlisted entities fail validation. Risky writes return a short-lived confirmation token to the browser; the Confirm button submits it once. There is no generic arbitrary service or URL execution tool.
 
@@ -36,4 +38,4 @@ The gesture page uses a separate USB camera and a locally served MediaPipe hand 
 
 ## Verification
 
-Run `python -m unittest tests.test_local_backend -v` after installing `backend/requirements.txt`, then run `npm run build` in `frontend`. The integration test uses a fake Frigate frame and fake vision response, so it verifies scan, memory, and projector wiring without claiming hardware accuracy.
+Run `python -m unittest tests.test_local_backend tests.test_inventory_integrations -v` after installing `backend/requirements.txt`, then run `npm run build` in `frontend`. The integration tests use fake Frigate and Homebox responses, so they verify wiring without claiming hardware or model accuracy.

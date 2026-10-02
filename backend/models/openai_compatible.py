@@ -28,7 +28,8 @@ class OpenAICompatibleClient:
             width, height = picture.size
 
         prompt = (
-            "You are a workshop vision assistant. Analyze the image and identify visible tools or hardware.\n"
+            "You are a workshop vision assistant. Identify visible tools, storage boxes, bins, and readable labels. "
+            "Do not invent obscured label text or claim movement from one frame.\n"
             "Return strict JSON with keys: summary, detections.\n"
             "Each detection must include label, description, box, confidence.\n"
             f"Image size is {width}x{height}. The box format is [x1, y1, x2, y2] in image pixels.\n"
@@ -58,10 +59,7 @@ class OpenAICompatibleClient:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=self._headers(),
                     json=payload,
                 )
                 response.raise_for_status()
@@ -107,11 +105,14 @@ class OpenAICompatibleClient:
         async with httpx.AsyncClient(timeout=90.0) as client:
             response = await client.post(
                 f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers=self._headers(),
                 json=payload,
             )
             response.raise_for_status()
             return str(response.json()["choices"][0]["message"]["content"])
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
     def _mock_scan(self, camera: str, zone: str, snapshot_path: str) -> ScanResult:
         return ScanResult(

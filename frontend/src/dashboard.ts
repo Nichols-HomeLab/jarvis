@@ -26,6 +26,12 @@ type ScanResult = {
   detections: Array<{ label: string; description: string; box: number[]; confidence: number }>;
 };
 
+type IdentificationResult = {
+  assessment: string;
+  scan: ScanResult;
+  image_matches: Array<{ title: string; url: string; image_url: string }>;
+};
+
 const cameraList = document.getElementById("camera-list") as HTMLDivElement;
 const refreshCamerasButton = document.getElementById("refresh-cameras") as HTMLButtonElement;
 const commandForm = document.getElementById("command-form") as HTMLFormElement;
@@ -38,6 +44,11 @@ const recentMemory = document.getElementById("recent-memory") as HTMLDivElement;
 const preview = document.getElementById("scan-preview") as HTMLDivElement;
 const scanImage = document.getElementById("scan-image") as HTMLImageElement;
 const scanBoxes = document.getElementById("scan-boxes") as HTMLDivElement;
+const identificationResults = document.getElementById("identification-results") as HTMLDivElement;
+const homeboxForm = document.getElementById("homebox-form") as HTMLFormElement;
+const homeboxInput = document.getElementById("homebox-input") as HTMLInputElement;
+const homeboxOutput = document.getElementById("homebox-output") as HTMLPreElement;
+const syncHomeboxButton = document.getElementById("sync-homebox") as HTMLButtonElement;
 let latestScan: ScanResult | null = null;
 
 function renderScanBoxes() {
@@ -73,6 +84,37 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 function renderJson(target: HTMLElement, value: unknown) {
   target.textContent = JSON.stringify(value, null, 2);
+}
+
+function showScan(result: ScanResult) {
+  latestScan = result;
+  preview.classList.remove("hidden");
+  scanImage.src = result.snapshot_path;
+}
+
+function renderIdentification(result: IdentificationResult) {
+  identificationResults.replaceChildren();
+  const assessment = document.createElement("p");
+  assessment.textContent = result.assessment;
+  identificationResults.appendChild(assessment);
+  result.image_matches.forEach((match) => {
+    const link = document.createElement("a");
+    link.href = match.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    if (match.image_url) {
+      const image = document.createElement("img");
+      image.src = match.image_url;
+      image.loading = "lazy";
+      image.referrerPolicy = "no-referrer";
+      image.alt = match.title || "Candidate image";
+      link.appendChild(image);
+    }
+    const caption = document.createElement("span");
+    caption.textContent = match.title || match.url;
+    link.appendChild(caption);
+    identificationResults.appendChild(link);
+  });
 }
 
 function renderRecentMemory(items: SearchResult[]) {
@@ -114,9 +156,7 @@ async function loadCameras() {
       try {
         const result = await request<ScanResult>(`/api/v2/scan/${camera.name}`, { method: "POST" });
         renderJson(commandOutput, result);
-        latestScan = result;
-        preview.classList.remove("hidden");
-        scanImage.src = result.snapshot_path;
+        showScan(result);
         await loadRecentMemory();
       } catch (error) {
         renderJson(commandOutput, { error: String(error) });
@@ -134,6 +174,22 @@ async function loadCameras() {
     zone.textContent = camera.zone_name;
     card.append(name, zone);
     card.appendChild(button);
+    const identifyButton = document.createElement("button");
+    identifyButton.textContent = `Identify on ${camera.name}`;
+    identifyButton.addEventListener("click", async () => {
+      identifyButton.disabled = true;
+      try {
+        const result = await request<IdentificationResult>(`/api/v2/cameras/${camera.name}/identify`, { method: "POST" });
+        showScan(result.scan);
+        renderIdentification(result);
+        await loadRecentMemory();
+      } catch (error) {
+        renderJson(commandOutput, { error: String(error) });
+      } finally {
+        identifyButton.disabled = false;
+      }
+    });
+    card.appendChild(identifyButton);
     cameraList.appendChild(card);
   });
 }
@@ -173,6 +229,36 @@ searchForm.addEventListener("submit", async (event) => {
     renderJson(searchOutput, result);
   } catch (error) {
     renderJson(searchOutput, { error: String(error) });
+  }
+});
+
+syncHomeboxButton.addEventListener("click", async () => {
+  syncHomeboxButton.disabled = true;
+  try {
+    renderJson(homeboxOutput, await request("/api/v2/homebox/sync", { method: "POST" }));
+  } catch (error) {
+    renderJson(homeboxOutput, { error: String(error) });
+  } finally {
+    syncHomeboxButton.disabled = false;
+  }
+});
+
+homeboxForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const query = homeboxInput.value.trim();
+  if (!query) return;
+  try {
+    const params = `q=${encodeURIComponent(query)}`;
+    const result = await request(`/api/v2/homebox/search?${params}`);
+    let contents: unknown = null;
+    try {
+      contents = await request(`/api/v2/homebox/contents?${params}`);
+    } catch {
+      // Ordinary items have no nested contents.
+    }
+    renderJson(homeboxOutput, { match: result, contents });
+  } catch (error) {
+    renderJson(homeboxOutput, { error: String(error) });
   }
 });
 

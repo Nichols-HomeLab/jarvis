@@ -7,13 +7,14 @@ import httpx
 
 
 class WebSearch:
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, transport: httpx.AsyncBaseTransport | None = None):
         self.base_url = base_url
+        self.transport = transport
 
     async def search(self, query: str) -> list[dict[str, str]]:
         if not self.base_url:
             raise RuntimeError("SEARXNG_URL is not configured")
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=20.0, transport=self.transport) as client:
             response = await client.get(f"{self.base_url}/search", params={"q": query, "format": "json"})
             response.raise_for_status()
         results = []
@@ -23,6 +24,26 @@ class WebSearch:
                 continue
             results.append({"title": str(item.get("title", ""))[:200], "snippet": str(item.get("content", ""))[:600], "url": url})
         return results
+
+    async def image_search(self, query: str) -> list[dict[str, str]]:
+        if not self.base_url:
+            raise RuntimeError("SEARXNG_URL is not configured")
+        async with httpx.AsyncClient(timeout=20.0, transport=self.transport) as client:
+            response = await client.get(
+                f"{self.base_url}/search",
+                params={"q": query, "categories": "images", "format": "json"},
+            )
+            response.raise_for_status()
+        matches = []
+        for item in response.json().get("results", [])[:8]:
+            page_url = str(item.get("url") or "")
+            image_url = str(item.get("img_src") or item.get("thumbnail_src") or "")
+            if urlparse(page_url).scheme not in {"http", "https"}:
+                continue
+            if image_url and urlparse(image_url).scheme not in {"http", "https"}:
+                image_url = ""
+            matches.append({"title": str(item.get("title") or "")[:200], "url": page_url, "image_url": image_url})
+        return matches
 
 
 class HomeAssistant:

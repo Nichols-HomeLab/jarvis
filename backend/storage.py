@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 from backend.schemas import ObjectMemoryRecord, ScanResult, SearchResult
+from backend.homebox import HomeboxEntity
 
 
 class Storage:
@@ -73,8 +75,152 @@ class Storage:
                     event_id TEXT PRIMARY KEY,
                     processed_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS homebox_inventory (
+                    entity_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    parent_id TEXT,
+                    is_location INTEGER NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    path TEXT NOT NULL,
+                    synced_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS homebox_visual_sightings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_id TEXT NOT NULL,
+                    camera_name TEXT NOT NULL,
+                    zone_name TEXT NOT NULL,
+                    snapshot_path TEXT NOT NULL,
+                    bbox_x1 INTEGER NOT NULL,
+                    bbox_y1 INTEGER NOT NULL,
+                    bbox_x2 INTEGER NOT NULL,
+                    bbox_y2 INTEGER NOT NULL,
+                    confidence REAL NOT NULL,
+                    observed_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_homebox_visual_entity
+                    ON homebox_visual_sightings(entity_id, observed_at DESC);
                 """
             )
+
+    def replace_homebox_inventory(self, entities: list[HomeboxEntity]) -> int:
+        by_id = {entity.entity_id: entity for entity in entities}
+        if len(by_id) != len(entities):
+            raise ValueError("Homebox returned duplicate entity IDs")
+
+        def path_for(entity: HomeboxEntity) -> str:
+            names = [entity.name]
+            visited = {entity.entity_id}
+            parent_id = entity.parent_id
+            while parent_id and parent_id in by_id:
+                if parent_id in visited:
+                    raise ValueError("Homebox location hierarchy contains a cycle")
+                visited.add(parent_id)
+                parent = by_id[parent_id]
+                names.append(parent.name)
+                parent_id = parent.parent_id
+            return " / ".join(reversed(names))
+
+        now = datetime.now(timezone.utc).isoformat()
+        rows = [
+            (e.entity_id, e.name, e.description, e.parent_id, int(e.is_location), e.quantity, path_for(e), now)
+            for e in entities
+        ]
+        with self.connect() as conn:
+            conn.execute("DELETE FROM homebox_inventory")
+            conn.executemany(
+                "INSERT INTO homebox_inventory (entity_id, name, description, parent_id, is_location, quantity, path, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
+    def find_homebox(self, query: str, location_only: bool = False) -> dict | None:
+        query = query.strip().lower()
+        if not query:
+            return None
+        variants = [query]
+        if query.endswith("es"):
+            variants.append(query[:-2])
+        if query.endswith("s") and not query.endswith("ss"):
+            variants.append(query[:-1])
+        with self.connect() as conn:
+            row = None
+            for term in variants:
+                row = conn.execute(
+                    """SELECT * FROM homebox_inventory
+                       WHERE (instr(lower(name), ?) > 0 OR instr(lower(description), ?) > 0)
+                         AND (? = 0 OR is_location = 1)
+                       ORDER BY CASE WHEN lower(name) = ? THEN 0 ELSE 1 END,
+                                CASE WHEN is_location = 0 THEN 0 ELSE 1 END, length(path)
+                       LIMIT 1""",
+                    (term, term, int(location_only), term),
+                ).fetchone()
+                if row is not None:
+                    break
+        if row is None:
+            return None
+        result = dict(row)
+        with self.connect() as conn:
+            sighting = conn.execute(
+                "SELECT * FROM homebox_visual_sightings WHERE entity_id = ? ORDER BY observed_at DESC LIMIT 1",
+                (result["entity_id"],),
+            ).fetchone()
+        if sighting is not None:
+            result["visual_sighting"] = {
+                "camera": sighting["camera_name"],
+                "zone": sighting["zone_name"],
+                "snapshot_path": sighting["snapshot_path"],
+                "box": [sighting["bbox_x1"], sighting["bbox_y1"], sighting["bbox_x2"], sighting["bbox_y2"]],
+                "confidence": sighting["confidence"],
+                "observed_at": sighting["observed_at"],
+            }
+        return result
+
+    def link_homebox_scan(self, scan: ScanResult) -> int:
+        with self.connect() as conn:
+            entities = conn.execute("SELECT entity_id, name FROM homebox_inventory").fetchall()
+            matched = 0
+            for detection in scan.detections:
+                if detection.confidence < 0.75:
+                    continue
+                description = f"{detection.label} {detection.description}".lower()
+                candidates = [
+                    entity for entity in entities
+                    if len(entity["name"].strip()) >= 4
+                    and (len(entity["name"].split()) >= 2 or any(char.isdigit() for char in entity["name"]))
+                    and re.search(r"\b" + re.escape(entity["name"].lower()) + r"\b", description)
+                ]
+                if not candidates:
+                    continue
+                entity = max(candidates, key=lambda item: len(item["name"]))
+                conn.execute(
+                    """INSERT INTO homebox_visual_sightings
+                       (entity_id, camera_name, zone_name, snapshot_path,
+                        bbox_x1, bbox_y1, bbox_x2, bbox_y2, confidence, observed_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (entity["entity_id"], scan.camera, scan.zone, scan.snapshot_path,
+                     *detection.box, detection.confidence, scan.analyzed_at.isoformat()),
+                )
+                matched += 1
+            return matched
+
+    def homebox_contents(self, parent_id: str, limit: int = 100) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """WITH RECURSIVE descendants(entity_id, depth) AS (
+                     SELECT entity_id, 1 FROM homebox_inventory WHERE parent_id = ?
+                     UNION ALL
+                     SELECT h.entity_id, d.depth + 1 FROM homebox_inventory h
+                     JOIN descendants d ON h.parent_id = d.entity_id WHERE d.depth < 10
+                   )
+                   SELECT h.entity_id, h.name, h.path, h.quantity, h.is_location
+                   FROM homebox_inventory h JOIN descendants d ON h.entity_id = d.entity_id
+                   ORDER BY h.path LIMIT ?""",
+                (parent_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def save_scan(self, scan: ScanResult) -> None:
         with self.connect() as conn:

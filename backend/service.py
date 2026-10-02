@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import Settings
+from backend.homebox import HomeboxClient
 from backend.tools import HomeAssistant, WebSearch
 from backend.models.openai_compatible import OpenAICompatibleClient
 from backend.projector.hub import ProjectorHub
@@ -18,6 +19,7 @@ from backend.schemas import (
     CommandResponse,
     DetectionBox,
     DimensionRequest,
+    IdentificationResult,
     ObjectMemoryRecord,
     ProjectBoundingBoxRequest,
     ProjectCardRequest,
@@ -37,6 +39,7 @@ class JarvisLocalService:
         projector_hub: ProjectorHub,
         web_search: WebSearch | None = None,
         home_assistant: HomeAssistant | None = None,
+        homebox: HomeboxClient | None = None,
     ) -> None:
         self.settings = settings
         self.storage = storage
@@ -45,6 +48,7 @@ class JarvisLocalService:
         self.projector_hub = projector_hub
         self.web_search = web_search or WebSearch(settings.search_url)
         self.home_assistant = home_assistant or HomeAssistant(settings.home_assistant_url, settings.home_assistant_token, settings.ha_allowed_entities, settings.ha_dangerous_domains)
+        self.homebox = homebox or HomeboxClient(settings.homebox_url, settings.homebox_api_key)
         self.pending_actions: dict[str, tuple[float, str, str]] = {}
 
     async def scan_camera(self, camera_name: str) -> ScanResult:
@@ -57,8 +61,40 @@ class JarvisLocalService:
             image_bytes=image_bytes,
             snapshot_path=self._public_media_path(snapshot.snapshot_path),
         )
+        scan.detections = [
+            detection for detection in scan.detections
+            if detection.confidence >= self.settings.min_detection_confidence
+        ]
         self.storage.save_scan(scan)
+        self.storage.link_homebox_scan(scan)
         return scan
+
+    async def sync_homebox(self) -> dict[str, int]:
+        entities = await self.homebox.inventory()
+        return {"entities": self.storage.replace_homebox_inventory(entities)}
+
+    async def identify_camera(self, camera_name: str, target: str = "") -> IdentificationResult:
+        scan = await self.scan_camera(camera_name)
+        detections = [
+            item for item in scan.detections
+            if not target or target.lower() in f"{item.label} {item.description}".lower()
+        ]
+        if not detections:
+            return IdentificationResult(
+                camera=camera_name, query=target, scan=scan,
+                assessment="I could not identify a matching object in this snapshot.",
+            )
+        detection = max(detections, key=lambda item: item.confidence)
+        query = f"{detection.description or detection.label} tool identification".strip()
+        matches = await self.web_search.image_search(query)
+        references = "\n".join(f"{item['title']} [{item['url']}]" for item in matches[:5])
+        assessment = await self.model_client.chat(self.settings.research_model, [
+            {"role": "system", "content": "Assess a tentative workshop object identification using only the visual description and web result titles. Do not claim the web images were visually compared. Be brief, label uncertainty, and include a source URL if useful."},
+            {"role": "user", "content": f"Camera detection: {detection.label}; description: {detection.description}; confidence: {detection.confidence:.2f}. Web results:\n{references or 'none'}"},
+        ])
+        return IdentificationResult(
+            camera=camera_name, query=query, assessment=assessment, scan=scan, image_matches=matches,
+        )
 
     def search_tool_memory(self, query: str):
         return self.storage.find_last_seen(query)
@@ -175,6 +211,34 @@ class JarvisLocalService:
         text = request.text.strip()
         lowered = text.lower()
 
+        contents_match = re.search(r"(?:what(?:'s| is) in|what do i have in|show contents of) (?:my |the )?(.+?)[?.!]*$", lowered)
+        if contents_match:
+            target = contents_match.group(1).rstrip(" ?.! ")
+            box = self.storage.find_homebox(target, location_only=True)
+            if box is None:
+                return CommandResponse(text=f"Homebox has no synced box or location matching {target}.", route="homebox_contents")
+            contents = self.storage.homebox_contents(box["entity_id"])
+            names = ", ".join(item["name"] for item in contents if not item["is_location"])
+            camera_note = ""
+            if box.get("visual_sighting"):
+                sighting = box["visual_sighting"]
+                camera_note = f" I tentatively matched its label on {sighting['camera']} in {sighting['zone']}."
+            return CommandResponse(
+                text=f"Homebox lists {names or 'no items'} in {box['path']}.{camera_note} Contents are inventory data, not camera-confirmed.",
+                route="homebox_contents",
+            )
+
+        if lowered.startswith(("identify ", "what is this", "what's this")):
+            camera_name = next((camera.name for camera in self.cameras.list_cameras() if camera.name in lowered), None)
+            camera_name = camera_name or ("workbench" if any(camera.name == "workbench" for camera in self.cameras.list_cameras()) else None)
+            if camera_name is None:
+                return CommandResponse(text="No camera is configured for identification.", route="camera_identification_error")
+            try:
+                result = await self.identify_camera(camera_name)
+                return CommandResponse(text=result.assessment, route="camera_identification", scan_result=result.scan)
+            except Exception as exc:
+                return CommandResponse(text=f"Camera identification failed: {exc}", route="camera_identification_error")
+
         if "scan the pegboard" in lowered:
             scan = await self.scan_camera("pegboard")
             return CommandResponse(
@@ -196,6 +260,14 @@ class JarvisLocalService:
             target = location_match.group(1).rstrip(" ?.! ")
             result = self.search_tool_memory(target)
             if result is None:
+                inventory = self.storage.find_homebox(target)
+                if inventory is not None:
+                    sighting = inventory.get("visual_sighting")
+                    camera_note = f" A vision scan tentatively matched its label in {sighting['zone']} on {sighting['camera']}." if sighting else " I do not have a camera-confirmed sighting."
+                    return CommandResponse(
+                        text=f"Homebox lists {inventory['name']} at {inventory['path']}.{camera_note}",
+                        route="homebox_search",
+                    )
                 return CommandResponse(
                     text=f"I do not have a later sighting for {target}.",
                     route="tool_memory_search",
