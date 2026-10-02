@@ -77,6 +77,11 @@ class Settings:
     mqtt_password: str = ""
     mqtt_topic_prefix: str = "frigate"
     access_token: str = ""
+    homebox_url: str = ""
+    homebox_api_key: str = ""
+    homebox_sync_interval_seconds: int = 900
+    auto_scan_interval_seconds: int = 300
+    min_detection_confidence: float = 0.5
 
     @property
     def database_path(self) -> Path:
@@ -118,6 +123,17 @@ def _parse_cameras(raw_value: str | None) -> list[CameraConfig]:
 def load_settings() -> Settings:
     _load_dotenv()
 
+    bifrost_base_url = os.getenv("BIFROST_BASE_URL", "").strip()
+    if not bifrost_base_url:
+        raise ValueError("BIFROST_BASE_URL is required; Jarvis will not silently use a different model provider")
+    model_routes = {
+        name: os.getenv(name, "").strip()
+        for name in ("BIFROST_ROUTER_MODEL", "BIFROST_RESEARCH_MODEL", "BIFROST_VISION_MODEL")
+    }
+    missing_routes = [name for name, value in model_routes.items() if not value]
+    if missing_routes:
+        raise ValueError(f"Bifrost model routes are required: {', '.join(missing_routes)}")
+
     media_root = Path(os.getenv("MEDIA_ROOT", "data/media"))
     snapshot_dir = media_root / "current"
     event_dir = media_root / "events"
@@ -127,11 +143,11 @@ def load_settings() -> Settings:
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8000")),
         cors_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()],
-        openai_base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1").rstrip("/"),
-        openai_api_key=os.getenv("OPENAI_API_KEY", "dummy"),
-        router_model=os.getenv("OPENAI_ROUTER_MODEL", "gemma3n:e4b"),
-        vision_model=os.getenv("OPENAI_VISION_MODEL", "qwen2.5vl:7b"),
-        research_model=os.getenv("OPENAI_RESEARCH_MODEL", "qwen2.5:7b"),
+        openai_base_url=bifrost_base_url.rstrip("/"),
+        openai_api_key=os.getenv("BIFROST_API_KEY", ""),
+        router_model=model_routes["BIFROST_ROUTER_MODEL"],
+        vision_model=model_routes["BIFROST_VISION_MODEL"],
+        research_model=model_routes["BIFROST_RESEARCH_MODEL"],
         default_actor_name=os.getenv("DEFAULT_ACTOR_NAME", "David"),
         database_url=os.getenv("DATABASE_URL", "sqlite:///data/jarvis_local.db"),
         media_root=media_root,
@@ -162,7 +178,20 @@ def load_settings() -> Settings:
         mqtt_password=os.getenv("MQTT_PASSWORD", ""),
         mqtt_topic_prefix=os.getenv("MQTT_TOPIC_PREFIX", "frigate"),
         access_token=os.getenv("JARVIS_ACCESS_TOKEN", ""),
+        homebox_url=os.getenv("HOMEBOX_URL", "").rstrip("/"),
+        homebox_api_key=os.getenv("HOMEBOX_API_KEY", ""),
+        homebox_sync_interval_seconds=max(0, int(os.getenv("HOMEBOX_SYNC_INTERVAL_SECONDS", "900"))),
+        auto_scan_interval_seconds=max(0, int(os.getenv("AUTO_SCAN_INTERVAL_SECONDS", "300"))),
+        min_detection_confidence=float(os.getenv("MIN_DETECTION_CONFIDENCE", "0.5")),
     )
+
+    settings.openai_base_url = settings.openai_base_url.rstrip("/")
+    if not 0 <= settings.min_detection_confidence <= 1:
+        raise ValueError("MIN_DETECTION_CONFIDENCE must be between 0 and 1")
+    if 0 < settings.auto_scan_interval_seconds < 60:
+        raise ValueError("AUTO_SCAN_INTERVAL_SECONDS must be 0 or at least 60")
+    if 0 < settings.homebox_sync_interval_seconds < 60:
+        raise ValueError("HOMEBOX_SYNC_INTERVAL_SECONDS must be 0 or at least 60")
 
     settings.media_root.mkdir(parents=True, exist_ok=True)
     settings.camera_snapshot_dir.mkdir(parents=True, exist_ok=True)

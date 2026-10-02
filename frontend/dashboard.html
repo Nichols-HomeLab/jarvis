@@ -54,6 +54,24 @@
 
       <section class="panel">
         <div class="panel-heading">
+          <h2>Homebox Inventory</h2>
+          <button id="sync-homebox">Sync Homebox</button>
+        </div>
+        <form id="homebox-form" class="inline-form">
+          <input id="homebox-input" placeholder="Find a tool or list a box's contents" />
+          <button type="submit">Find</button>
+        </form>
+        <pre id="homebox-output" class="output"></pre>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading"><h2>Image Identification</h2></div>
+        <p>Identify from a fresh camera snapshot, then review possible web image references. Matches are suggestions, not verified IDs.</p>
+        <div id="identification-results" class="identification-results"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
           <h2>Recent Memory</h2>
         </div>
         <div id="recent-memory" class="memory-list"></div>

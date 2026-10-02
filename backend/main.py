@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import asyncio
+import logging
 import secrets
 import re
 from contextlib import asynccontextmanager
@@ -12,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend.config import load_settings
+from backend.homebox import HomeboxClient
 from backend.auth import SessionGate, COOKIE_NAME
 from backend.models.openai_compatible import OpenAICompatibleClient
 from backend.projector.hub import ProjectorHub
@@ -28,6 +31,7 @@ from backend.schemas import (
     ScanResult,
     DimensionRequest,
     GestureEvent,
+    IdentificationResult,
 )
 from backend.service import JarvisLocalService
 from backend.storage import Storage
@@ -35,6 +39,7 @@ from backend.vision.camera_manager import CameraManager
 
 
 settings = load_settings()
+log = logging.getLogger(__name__)
 session_gate = SessionGate(settings.access_token, settings.cors_origins)
 storage = Storage(settings.database_path)
 frigate = FrigateClient(settings.frigate_url, settings.frigate_token, settings.frigate_user, settings.frigate_password)
@@ -52,6 +57,7 @@ service = JarvisLocalService(
     settings, storage, cameras, model_client, projector_hub,
     WebSearch(settings.search_url),
     HomeAssistant(settings.home_assistant_url, settings.home_assistant_token, settings.ha_allowed_entities, settings.ha_dangerous_domains),
+    HomeboxClient(settings.homebox_url, settings.homebox_api_key),
 )
 audio = LocalAudio(settings.stt_base_url, settings.stt_model, settings.tts_base_url, settings.tts_model, settings.tts_voice, settings.openai_api_key)
 _event_locks: set[str] = set()
@@ -70,7 +76,9 @@ async def ingest_frigate_event(event_id: str) -> dict[str, object]:
         target = settings.camera_event_dir / f"{event_id}.jpg"
         target.write_bytes(image)
         scan = await model_client.analyze_snapshot(camera.name, camera.zone_name, image, service._public_media_path(target.as_posix()))
+        scan.detections = [item for item in scan.detections if item.confidence >= settings.min_detection_confidence]
         storage.save_scan(scan)
+        storage.link_homebox_scan(scan)
         storage.record_event(event_id)
         return {"event_id": event_id, "detections": len(scan.detections)}
     finally:
@@ -80,12 +88,41 @@ async def ingest_frigate_event(event_id: str) -> dict[str, object]:
 subscriber = FrigateMQTTSubscriber(settings, ingest_frigate_event)
 
 
+async def periodic_scans() -> None:
+    while True:
+        for camera in cameras.list_cameras():
+            try:
+                await service.scan_camera(camera.name)
+            except Exception:
+                log.exception("Automatic scan failed for %s", camera.name)
+            await asyncio.sleep(2)
+        await asyncio.sleep(settings.auto_scan_interval_seconds)
+
+
+async def periodic_homebox_sync() -> None:
+    while True:
+        try:
+            await service.sync_homebox()
+        except Exception:
+            log.exception("Homebox inventory sync failed")
+        await asyncio.sleep(settings.homebox_sync_interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     subscriber.start()
+    tasks = []
+    if settings.auto_scan_interval_seconds and cameras.list_cameras():
+        tasks.append(asyncio.create_task(periodic_scans()))
+    if settings.homebox_sync_interval_seconds and service.homebox.configured:
+        tasks.append(asyncio.create_task(periodic_homebox_sync()))
     try:
         yield
     finally:
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         subscriber.stop()
 
 app = FastAPI(title="Jarvis Local Workshop API", version="0.3.0", lifespan=lifespan)
@@ -166,6 +203,9 @@ async def health() -> dict[str, object]:
         "stt_configured": bool(settings.stt_base_url),
         "tts_configured": bool(settings.tts_base_url),
         "vision_model": settings.vision_model,
+        "model_gateway": "bifrost",
+        "homebox_configured": service.homebox.configured,
+        "automatic_scan_seconds": settings.auto_scan_interval_seconds,
     }
 
 
@@ -202,6 +242,40 @@ async def scan_camera(camera_name: str) -> ScanResult:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Vision scan failed: {exc}") from exc
+
+
+@app.post("/api/v2/cameras/{camera_name}/identify", response_model=IdentificationResult)
+async def identify_camera(camera_name: str, target: str = "") -> IdentificationResult:
+    try:
+        return await service.identify_camera(camera_name, target)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Identification failed: {exc}") from exc
+
+
+@app.post("/api/v2/homebox/sync")
+async def sync_homebox() -> dict[str, int]:
+    try:
+        return await service.sync_homebox()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Homebox sync failed: {exc}") from exc
+
+
+@app.get("/api/v2/homebox/search")
+async def search_homebox(q: str):
+    match = storage.find_homebox(q)
+    if match is None:
+        raise HTTPException(status_code=404, detail="No matching Homebox item or location")
+    return match
+
+
+@app.get("/api/v2/homebox/contents")
+async def homebox_contents(q: str):
+    box = storage.find_homebox(q, location_only=True)
+    if box is None:
+        raise HTTPException(status_code=404, detail="No matching Homebox box or location")
+    return {"location": box, "contents": storage.homebox_contents(box["entity_id"])}
 
 
 @app.get("/api/v2/tool-memory/search")

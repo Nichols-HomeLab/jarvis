@@ -11,6 +11,7 @@ This folder defines the target direction for the local-first Jarvis fork.
 - [Implementation Roadmap](implementation-roadmap.md)
 - [Repo Refactor Plan](repo-refactor-plan.md)
 - [Operations](operations.md)
+- [Bifrost, Frigate, And Homebox Inventory](bifrost-homebox-inventory.md)
 
 ## How To Use These Docs
 

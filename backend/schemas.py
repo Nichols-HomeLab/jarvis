@@ -101,6 +101,14 @@ class CameraSnapshot(BaseModel):
     captured_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class IdentificationResult(BaseModel):
+    camera: str
+    query: str
+    assessment: str
+    scan: ScanResult
+    image_matches: list[dict[str, str]] = Field(default_factory=list)
+
+
 class CommandResponse(BaseModel):
     text: str
     route: str
