@@ -12,6 +12,15 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  detector:
+    build:
+      context: .
+      dockerfile: detector/Dockerfile
+    environment:
+      GROUNDING_DINO_MODEL: /opt/models/grounding-dino-tiny
+      YOLO_MODEL: /opt/models/yolo26n.pt
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend

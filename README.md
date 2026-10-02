@@ -20,7 +20,7 @@ The browser uses push to talk. STT and TTS run through the endpoints configured 
 
 ## Example Flow
 
-1. Say or type “Scan the pegboard.” Jarvis fetches `/<camera>/latest.jpg` from Frigate, analyzes the frame with the configured vision model, and stores detections in SQLite.
+1. Say or type “Scan the pegboard.” Jarvis fetches `/<camera>/latest.jpg` from Frigate, analyzes the frame with the configured vision model, and stores detections in hybrid memory.
 2. Ask “Where are my screwdrivers?” Jarvis searches object memory, gives the last observed zone and time, and sends the stored image and box to the projector page.
 3. Ask “Research a Dell R630 and project its footprint.” Jarvis searches through SearXNG, asks the research model for sourced dimensions, and displays an outline. With projector measurements set to zero, this outline is explicitly illustrative.
 4. Ask “What is in the blue parts bin?” Jarvis answers from its read-only Homebox inventory cache, including nested items. Ask “Identify the tool on the workbench” for a fresh Frigate snapshot, Bifrost vision analysis, and web image candidates.
@@ -29,14 +29,16 @@ The browser uses push to talk. STT and TTS run through the endpoints configured 
 
 See [.env.example](.env.example) and [Operations](docs/operations.md). Configure `BIFROST_BASE_URL` and all three `BIFROST_*_MODEL` routes before startup; Jarvis refuses to fall back to a different model provider. Set `BIFROST_API_KEY` only when required. Configure `FRIGATE_URL` and `JARVIS_CAMERAS_JSON` for cameras; `HOMEBOX_URL` and `HOMEBOX_API_KEY` are optional until Homebox is running again.
 
-Frigate provides latest frames and event snapshots. Jarvis never needs direct camera credentials or RTSP access. The Home Assistant adapter only accepts explicitly allowed entity IDs; lock, cover, climate, and switch writes require a second confirmation. The LLM cannot supply an arbitrary URL or direct API call.
+Frigate provides latest frames and event snapshots. Jarvis can read Frigate’s RTSP restream without direct camera credentials. The Home Assistant adapter only accepts explicitly allowed entity IDs; lock, cover, climate, and switch writes require a second confirmation. The LLM cannot supply an arbitrary URL or direct API call.
 
 ## What Is Implemented
 
 - Frigate latest frame capture, completed event ingestion through optional MQTT, and event snapshots
 - Snapshot based tool detection through a vision model
 - Configurable periodic Frigate scans and completed-event ingestion for automatic sightings
-- SQLite tool locations and last seen lookup
+- PostgreSQL/pgvector semantic retrieval and explicit Markdown-style inventory relationships
+- Grounding DINO / YOLO detector service with crop-based VLM identification
+- Native Frigate RTSP live view with refreshed bounding boxes
 - Read-only Homebox inventory sync, nested box contents, and tentative camera-to-box label matches
 - Image-assisted identification with SearXNG image candidates; camera images stay on the local model path
 - Websocket projector cards, bounding boxes, and sourced dimension footprints
@@ -52,6 +54,8 @@ The repo cannot know your camera addresses, entity IDs, model names, projector g
 Object movement is recorded conservatively. A missing tool after motion is reported as a lost sighting, never as proof that a named person carried it or took it outside. Homebox contents are inventory records, not proof of current physical presence. Camera-to-box links are tentative name/label matches. The system does not train a custom detector or continuously analyze video.
 
 ## Docs
+
+- [Hybrid memory, live view, and dedicated detection](docs/hybrid-memory-and-detection.md)
 
 - [Operations](docs/operations.md)
 - [Bifrost, Frigate, and Homebox inventory](docs/bifrost-homebox-inventory.md)

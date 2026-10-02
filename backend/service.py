@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import secrets
 import time
@@ -40,6 +41,8 @@ class JarvisLocalService:
         web_search: WebSearch | None = None,
         home_assistant: HomeAssistant | None = None,
         homebox: HomeboxClient | None = None,
+        embedder=None,
+        detector=None,
     ) -> None:
         self.settings = settings
         self.storage = storage
@@ -49,13 +52,23 @@ class JarvisLocalService:
         self.web_search = web_search or WebSearch(settings.search_url)
         self.home_assistant = home_assistant or HomeAssistant(settings.home_assistant_url, settings.home_assistant_token, settings.ha_allowed_entities, settings.ha_dangerous_domains)
         self.homebox = homebox or HomeboxClient(settings.homebox_url, settings.homebox_api_key)
+        self.embedder = embedder
+        self.detector = detector
+        self.latest_scans: dict[str, ScanResult] = {}
+        self._scan_locks: dict[str, asyncio.Lock] = {}
         self.pending_actions: dict[str, tuple[float, str, str]] = {}
 
     async def scan_camera(self, camera_name: str) -> ScanResult:
+        lock = self._scan_locks.setdefault(camera_name, asyncio.Lock())
+        async with lock:
+            return await self._scan_camera(camera_name)
+
+    async def _scan_camera(self, camera_name: str) -> ScanResult:
         snapshot = await self.cameras.capture_snapshot(camera_name)
         camera = self.cameras.get_camera(camera_name)
         image_bytes = Path(snapshot.snapshot_path).read_bytes()
-        scan = await self.model_client.analyze_snapshot(
+        analyzer = self.detector or self.model_client
+        scan = await analyzer.analyze_snapshot(
             camera=camera_name,
             zone=camera.zone_name,
             image_bytes=image_bytes,
@@ -65,6 +78,7 @@ class JarvisLocalService:
             detection for detection in scan.detections
             if detection.confidence >= self.settings.min_detection_confidence
         ]
+        self.latest_scans[camera_name] = scan
         self.storage.save_scan(scan)
         self.storage.link_homebox_scan(scan)
         return scan
@@ -97,7 +111,33 @@ class JarvisLocalService:
         )
 
     def search_tool_memory(self, query: str):
-        return self.storage.find_last_seen(query)
+        results = self.storage.hybrid_search(query)
+        return results[0] if results else self.storage.find_last_seen(query)
+
+    async def index_memories(self) -> int:
+        if self.embedder is None:
+            return 0
+        pending = await asyncio.to_thread(self.storage.pending_embeddings, self.embedder.model_name)
+        if not pending:
+            return 0
+        vectors = await self.embedder.embed([row["markdown"] for row in pending])
+        for row, vector in zip(pending, vectors, strict=True):
+            await asyncio.to_thread(self.storage.set_embedding, row["id"], row["markdown"], vector, self.embedder.model_name)
+        return len(pending)
+
+    async def hybrid_search(self, query: str, limit: int = 10):
+        vector = None
+        if self.embedder is not None:
+            try:
+                vector = (await self.embedder.embed([query]))[0]
+            except Exception:
+                logging.getLogger(__name__).exception("Semantic retrieval unavailable; returning explicit memory matches")
+        return await asyncio.to_thread(self.storage.hybrid_search, query, vector,
+            self.embedder.model_name if self.embedder else "", limit)
+
+    async def find_tool(self, query: str):
+        results = await self.hybrid_search(query)
+        return results[0] if results else self.storage.find_last_seen(query)
 
     async def project_bounding_box(self, request: ProjectBoundingBoxRequest) -> None:
         await self.projector_hub.broadcast(
@@ -258,7 +298,7 @@ class JarvisLocalService:
         location_match = re.search(r"where (?:are|is) (?:my |the )?(.+?)[?.!]*$", lowered)
         if location_match:
             target = location_match.group(1).rstrip(" ?.! ")
-            result = self.search_tool_memory(target)
+            result = await self.find_tool(target)
             if result is None:
                 inventory = self.storage.find_homebox(target)
                 if inventory is not None:
@@ -272,6 +312,10 @@ class JarvisLocalService:
                     text=f"I do not have a later sighting for {target}.",
                     route="tool_memory_search",
                 )
+
+            if result.inventory_path:
+                return CommandResponse(text=f"Homebox lists {result.object_name} at {result.inventory_path}. This is the recorded inventory location.",
+                    route="homebox_search", search_result=result)
 
             projector_sent = False
             if request.project_result and result.action != "lost_after_motion" and result.snapshot_path and result.bbox:
@@ -310,7 +354,7 @@ class JarvisLocalService:
 
         if lowered.startswith("show me where "):
             target = lowered.split("show me where ", 1)[1].removeprefix("the ").removeprefix("my ").rstrip(" ?.")
-            result = self.search_tool_memory(target)
+            result = await self.find_tool(target)
             if result is None or not result.snapshot_path or not result.bbox:
                 return CommandResponse(
                     text=f"I do not have a projector-ready sighting for {target}.",

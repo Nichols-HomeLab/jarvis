@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import re
 import sqlite3
 from contextlib import contextmanager
@@ -8,27 +10,72 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
+import psycopg
+from psycopg.rows import dict_row
+
 from backend.schemas import ObjectMemoryRecord, ScanResult, SearchResult
 from backend.homebox import HomeboxEntity
 
 
+class DatabaseConnection:
+    """One transaction API; queries below use portable SQL and bound values."""
+    def __init__(self, raw, postgres):
+        self.raw, self.postgres = raw, postgres
+
+    def execute(self, sql, parameters=()):
+        if self.postgres:
+            sql = sql.replace("?", "%s")
+        return self.raw.execute(sql, parameters)
+
+    def executemany(self, sql, rows):
+        if self.postgres:
+            sql = sql.replace("?", "%s")
+            with self.raw.cursor() as cursor:
+                cursor.executemany(sql, rows)
+        else:
+            self.raw.executemany(sql, rows)
+
+    def executescript(self, sql):
+        if self.postgres:
+            sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
+            for statement in sql.split(";"):
+                if statement.strip():
+                    self.raw.execute(statement)
+        else:
+            self.raw.executescript(sql)
+
+
 class Storage:
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
+    def __init__(self, database_url: str | Path, embedding_dimensions: int = 384):
+        self.postgres = str(database_url).startswith(("postgresql://", "postgres://"))
+        self.database_url = str(database_url)
+        self.db_path = Path(str(database_url).removeprefix("sqlite:///")) if not self.postgres else None
+        self.embedding_dimensions = embedding_dimensions
+        if not 1 <= embedding_dimensions <= 2000:
+            raise ValueError("Embedding dimensions must be between 1 and 2000")
+        if self.db_path:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+    def connect(self) -> Iterator[DatabaseConnection]:
+        raw = psycopg.connect(self.database_url, row_factory=dict_row, connect_timeout=10) if self.postgres else sqlite3.connect(self.db_path)
+        if not self.postgres:
+            raw.row_factory = sqlite3.Row
+            raw.execute("PRAGMA foreign_keys=ON")
         try:
-            yield conn
-            conn.commit()
+            yield DatabaseConnection(raw, self.postgres)
+            raw.commit()
+        except BaseException:
+            raw.rollback()
+            raise
         finally:
-            conn.close()
+            raw.close()
 
     def _init_db(self) -> None:
         with self.connect() as conn:
+            if self.postgres:
+                conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS object_memories (
@@ -105,6 +152,30 @@ class Storage:
                 """
             )
 
+            vector_type = f"vector({self.embedding_dimensions})" if self.postgres else "TEXT"
+            conn.executescript(f"""
+                CREATE TABLE IF NOT EXISTS memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_key TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    markdown TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    embedding {vector_type},
+                    embedding_model TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS memory_links (
+                    source_id BIGINT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                    target_id BIGINT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                    relation_type TEXT NOT NULL,
+                    PRIMARY KEY (source_id, target_id, relation_type),
+                    CHECK (source_id <> target_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target_id);
+            """)
+
     def replace_homebox_inventory(self, entities: list[HomeboxEntity]) -> int:
         by_id = {entity.entity_id: entity for entity in entities}
         if len(by_id) != len(entities):
@@ -134,6 +205,22 @@ class Storage:
                 "INSERT INTO homebox_inventory (entity_id, name, description, parent_id, is_location, quantity, path, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
+            conn.execute("DELETE FROM memory_links WHERE source_id IN (SELECT id FROM memories WHERE source = 'homebox')")
+            existing = conn.execute("SELECT id, source_key FROM memories WHERE source = 'homebox'").fetchall()
+            for row in existing:
+                if row["source_key"].removeprefix("homebox:") not in by_id:
+                    conn.execute("DELETE FROM memories WHERE id = ?", (row["id"],))
+            ids = {}
+            for e in entities:
+                path = path_for(e)
+                result = SearchResult(object_name=e.name, object_category="location" if e.is_location else "inventory",
+                    description=e.description, camera_name="", zone_name=path, action="inventory", confidence=1,
+                    last_seen_at=datetime.now(timezone.utc), inventory_path=path, entity_id=e.entity_id)
+                ids[e.entity_id] = self._upsert_node(conn, "homebox:" + e.entity_id, "homebox", e.name,
+                    result.object_category, f"# {e.name}\n\n{e.description}\n\nLocation: {path}", result.model_dump_json())
+            for e in entities:
+                if e.parent_id in ids:
+                    self._link(conn, ids[e.entity_id], ids[e.parent_id], "is_inside")
         return len(rows)
 
     def find_homebox(self, query: str, location_only: bool = False) -> dict | None:
@@ -150,12 +237,12 @@ class Storage:
             for term in variants:
                 row = conn.execute(
                     """SELECT * FROM homebox_inventory
-                       WHERE (instr(lower(name), ?) > 0 OR instr(lower(description), ?) > 0)
+                       WHERE (lower(name) LIKE ? ESCAPE '!' OR lower(description) LIKE ? ESCAPE '!')
                          AND (? = 0 OR is_location = 1)
                        ORDER BY CASE WHEN lower(name) = ? THEN 0 ELSE 1 END,
                                 CASE WHEN is_location = 0 THEN 0 ELSE 1 END, length(path)
                        LIMIT 1""",
-                    (term, term, int(location_only), term),
+                    (self._pattern(term), self._pattern(term), int(location_only), term),
                 ).fetchone()
                 if row is not None:
                     break
@@ -262,49 +349,45 @@ class Storage:
                 )
                 self.save_memory(memory, conn)
 
-    def save_memory(self, memory: ObjectMemoryRecord, conn: sqlite3.Connection | None = None) -> None:
-        owns_conn = conn is None
-        connection = conn
-        if connection is None:
-            connection = sqlite3.connect(self.db_path)
-        try:
-            connection.execute(
-                """
-                INSERT INTO object_memories (
-                    object_name, object_category, description, camera_name,
-                    zone_name, action, actor, direction, last_seen_at,
-                    confidence, snapshot_path, clip_path, raw_model_output
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    memory.object_name,
-                    memory.object_category,
-                    memory.description,
-                    memory.camera_name,
-                    memory.zone_name,
-                    memory.action,
-                    memory.actor,
-                    memory.direction,
-                    memory.last_seen_at.isoformat(),
-                    memory.confidence,
-                    memory.snapshot_path,
-                    memory.clip_path,
-                    json.dumps(memory.raw_model_output),
-                ),
-            )
-            if owns_conn:
-                connection.commit()
-        finally:
-            if owns_conn:
-                connection.close()
+    def save_memory(self, memory: ObjectMemoryRecord, conn: DatabaseConnection | None = None) -> None:
+        if conn is None:
+            with self.connect() as connection:
+                self.save_memory(memory, connection)
+            return
+        conn.execute("""INSERT INTO object_memories (
+            object_name, object_category, description, camera_name, zone_name, action,
+            actor, direction, last_seen_at, confidence, snapshot_path, clip_path, raw_model_output
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (memory.object_name, memory.object_category, memory.description, memory.camera_name,
+             memory.zone_name, memory.action, memory.actor, memory.direction,
+             memory.last_seen_at.isoformat(), memory.confidence, memory.snapshot_path,
+             memory.clip_path, json.dumps(memory.raw_model_output)))
+        self._remember(conn, memory)
+
+    def _remember(self, conn, memory):
+        result = SearchResult(**memory.model_dump(exclude={"raw_model_output"}))
+        bbox = conn.execute("""SELECT bbox_x1, bbox_y1, bbox_x2, bbox_y2 FROM object_detections
+            WHERE snapshot_path = ? AND label = ? AND description = ? ORDER BY id DESC LIMIT 1""",
+            (memory.snapshot_path, memory.object_category, memory.description)).fetchone()
+        if bbox:
+            result.bbox = [bbox[f"bbox_{axis}"] for axis in ("x1", "y1", "x2", "y2")]
+        key = "vision:" + hashlib.sha256(f"{memory.camera_name}:{memory.zone_name}:{memory.object_name.lower()}".encode()).hexdigest()
+        current = conn.execute("SELECT payload FROM memories WHERE source_key = ?", (key,)).fetchone()
+        if current and SearchResult.model_validate_json(current["payload"]).last_seen_at > memory.last_seen_at:
+            return  # historical imports must not replace a more recent sighting
+        node = self._upsert_node(conn, key, "vision", memory.object_name, memory.object_category,
+            f"# {memory.object_name}\n\n{memory.description}\n\nSeen in: {memory.zone_name} ({memory.camera_name})", result.model_dump_json())
+        zone = self._upsert_node(conn, f"zone:{memory.camera_name}:{memory.zone_name}", "zone", memory.zone_name,
+            "location", f"# {memory.zone_name}\n\nCamera: {memory.camera_name}", "{}")
+        self._link(conn, node, zone, "seen_in")
 
     def find_last_seen(self, query: str) -> SearchResult | None:
         normalized = query.strip().lower()
         variants = {normalized, normalized.rstrip("s") if normalized.endswith("s") and not normalized.endswith("ss") else normalized}
-        patterns = [f"%{part}%" for part in variants if part]
+        patterns = [self._pattern(part) for part in variants if part]
         if not patterns:
             return None
-        where = " OR ".join("(lower(m.object_name) LIKE ? OR lower(m.object_category) LIKE ? OR lower(m.description) LIKE ?)" for _ in patterns)
+        where = " OR ".join("(lower(m.object_name) LIKE ? ESCAPE '!' OR lower(m.object_category) LIKE ? ESCAPE '!' OR lower(m.description) LIKE ? ESCAPE '!')" for _ in patterns)
         with self.connect() as conn:
             row = conn.execute(
                 f"""
@@ -332,7 +415,7 @@ class Storage:
                  AND lower(d.label) = lower(m.object_category)
                  AND d.snapshot_path = m.snapshot_path
                 WHERE {where}
-                ORDER BY datetime(m.last_seen_at) DESC
+                ORDER BY m.last_seen_at DESC
                 LIMIT 1
                 """,
                 tuple(value for pattern in patterns for value in (pattern, pattern, pattern)),
@@ -370,7 +453,7 @@ class Storage:
                     zone_name, action, actor, direction, confidence,
                     last_seen_at, snapshot_path, clip_path
                 FROM object_memories
-                ORDER BY datetime(last_seen_at) DESC
+                ORDER BY last_seen_at DESC
                 LIMIT ?
                 """,
                 (limit,),
@@ -403,9 +486,158 @@ class Storage:
 
     def record_event(self, event_id: str) -> None:
         with self.connect() as conn:
-            conn.execute("INSERT OR IGNORE INTO processed_camera_events (event_id, processed_at) VALUES (?, ?)", (event_id, datetime.now(timezone.utc).isoformat()))
+            conn.execute("INSERT INTO processed_camera_events (event_id, processed_at) VALUES (?, ?) ON CONFLICT (event_id) DO NOTHING", (event_id, datetime.now(timezone.utc).isoformat()))
 
     @staticmethod
     def _parse_time(value: str) -> datetime:
         timestamp = datetime.fromisoformat(value)
         return timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _pattern(text: str) -> str:
+        return "%" + text.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+
+    def _upsert_node(self, conn, key, source, title, category, markdown, payload):
+        row = conn.execute("""INSERT INTO memories (source_key, source, title, category, markdown, payload, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (source_key) DO UPDATE SET title=excluded.title, category=excluded.category,
+                embedding=CASE WHEN memories.markdown=excluded.markdown THEN memories.embedding ELSE NULL END,
+                markdown=excluded.markdown, payload=excluded.payload, updated_at=excluded.updated_at
+            RETURNING id""", (key, source, title, category, markdown, payload, datetime.now(timezone.utc).isoformat())).fetchone()
+        return row["id"]
+
+    @staticmethod
+    def _link(conn, source, target, relation):
+        conn.execute("INSERT INTO memory_links VALUES (?, ?, ?) ON CONFLICT DO NOTHING", (source, target, relation))
+
+    def pending_embeddings(self, model: str, limit: int = 64) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT id, markdown FROM memories WHERE embedding IS NULL OR embedding_model <> ? LIMIT ?", (model, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_embedding(self, memory_id: int, markdown: str, vector: list[float], model: str):
+        if len(vector) != self.embedding_dimensions or not all(math.isfinite(x) for x in vector) or not any(vector):
+            raise ValueError("Invalid memory embedding")
+        with self.connect() as conn:
+            # Do not attach an old embedding if a concurrent sync changed the note.
+            conn.execute("UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ? AND markdown = ?",
+                         (json.dumps(vector), model, memory_id, markdown))
+
+    def hybrid_search(self, query: str, vector: list[float] | None = None, model: str = "", limit: int = 10, min_similarity: float = 0.5) -> list[SearchResult]:
+        words = re.findall(r"[\w-]+", query.lower())
+        words = [w for w in words if w not in {"find", "something", "similar", "like", "to", "a", "an", "the", "my", "in", "inside", "where", "is", "are", "me"}]
+        if not words:
+            return []
+        # Every meaningful query word must match; escape SQL wildcards.
+        groups, params = [], []
+        for word in words:
+            variants = [word, word[:-1]] if word.endswith("s") and not word.endswith("ss") else [word]
+            groups.append("(" + " OR ".join("lower(title || ' ' || markdown) LIKE ? ESCAPE '!'" for _ in variants) + ")")
+            params.extend(self._pattern(w) for w in variants)
+        candidates = {}
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM memories WHERE " + " AND ".join(groups), tuple(params)).fetchall()
+            for row in rows:
+                if row["source"] == "zone":
+                    linked = conn.execute("SELECT m.* FROM memories m JOIN memory_links l ON m.id=l.source_id WHERE l.target_id=?", (row["id"],)).fetchall()
+                    for child in linked:
+                        candidates[child["id"]] = (dict(child), 1.5, {"structured"})
+                else:
+                    score = 3.0 if row["source"] == "homebox" else 2.0
+                    candidates[row["id"]] = (dict(row), score, {"structured"})
+            if vector is not None:
+                if len(vector) != self.embedding_dimensions or not all(math.isfinite(x) for x in vector) or not any(vector):
+                    raise ValueError("Invalid query embedding")
+                if self.postgres:
+                    rows = conn.execute("""SELECT *, 1 - (embedding <=> ?::vector) AS similarity FROM memories
+                        WHERE embedding IS NOT NULL AND embedding_model=? AND source <> 'zone'
+                        ORDER BY embedding <=> ?::vector LIMIT ?""", (json.dumps(vector), model, json.dumps(vector), limit * 3)).fetchall()
+                else:
+                    rows = [dict(r) for r in conn.execute("SELECT * FROM memories WHERE embedding IS NOT NULL AND embedding_model=? AND source <> 'zone'", (model,)).fetchall()]
+                    norm = math.sqrt(sum(x*x for x in vector))
+                    for row in rows:
+                        other = json.loads(row["embedding"])
+                        row["similarity"] = sum(a*b for a,b in zip(vector, other)) / (norm * math.sqrt(sum(x*x for x in other)))
+                for row in rows:
+                    similarity = float(row["similarity"])
+                    if similarity < min_similarity:
+                        continue
+                    if row["id"] in candidates:
+                        prior, score, sources = candidates[row["id"]]
+                        candidates[row["id"]] = (prior, score + similarity * 0.1, sources | {"vector"})
+                    else:
+                        candidates[row["id"]] = (dict(row), similarity, {"vector"})
+            results = []
+            for row, score, sources in candidates.values():
+                result = SearchResult.model_validate_json(row["payload"])
+                result.memory_id = row["id"]
+                result.retrieval_source = "hybrid" if len(sources) > 1 else next(iter(sources))
+                result.retrieval_score = score
+                result.markdown = row["markdown"]
+                links = conn.execute("""WITH RECURSIVE parents(id, depth) AS (
+                    SELECT target_id, 1 FROM memory_links WHERE source_id=? AND relation_type='is_inside'
+                    UNION ALL SELECT l.target_id, p.depth+1 FROM memory_links l JOIN parents p ON l.source_id=p.id
+                        WHERE l.relation_type='is_inside' AND p.depth < 20)
+                    SELECT m.title FROM memories m JOIN parents p ON m.id=p.id ORDER BY p.depth DESC""", (row["id"],)).fetchall()
+                result.relationships = [r["title"] for r in links]
+                if result.entity_id:
+                    item = self.find_homebox(result.object_name)
+                    if item and item["entity_id"] == result.entity_id and item.get("visual_sighting"):
+                        sighting = item["visual_sighting"]
+                        result.camera_name, result.snapshot_path, result.bbox = sighting["camera"], sighting["snapshot_path"], sighting["box"]
+                results.append(result)
+        results.sort(key=lambda r: (r.retrieval_score, r.last_seen_at), reverse=True)
+        # A repeated camera sighting must not crowd out other candidates.
+        unique = {}
+        seen_names = set()
+        for result in results:
+            name = result.object_name.lower()
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            unique.setdefault(result.entity_id or name, result)
+        return list(unique.values())[:limit]
+
+    def memory_stats(self) -> dict:
+        with self.connect() as conn:
+            return {"backend": "postgresql" if self.postgres else "sqlite",
+                "memories": conn.execute("SELECT COUNT(*) AS n FROM memories").fetchone()["n"],
+                "embedded": conn.execute("SELECT COUNT(*) AS n FROM memories WHERE embedding IS NOT NULL").fetchone()["n"],
+                "links": conn.execute("SELECT COUNT(*) AS n FROM memory_links").fetchone()["n"]}
+
+    def migrate_sqlite(self, path: Path) -> dict[str, int]:
+        """Import the retained local database once, without deleting it."""
+        if not self.postgres or not path.is_file():
+            return {}
+        with self.connect() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
+            if conn.execute("SELECT 1 FROM schema_migrations WHERE name='sqlite-import-v1'").fetchone():
+                return {}
+            source = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            source.row_factory = sqlite3.Row
+            counts = {}
+            try:
+                tables = {r[0] for r in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                for table in ("object_memories", "object_detections", "camera_zones", "processed_camera_events", "homebox_inventory", "homebox_visual_sightings"):
+                    if table not in tables:
+                        continue
+                    rows = source.execute(f"SELECT * FROM {table}").fetchall()
+                    counts[table] = len(rows)
+                    for row in rows:
+                        columns = list(row.keys())
+                        conn.execute(f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)}) ON CONFLICT DO NOTHING", tuple(row))
+                    if table not in {"processed_camera_events", "homebox_inventory"}:
+                        conn.execute(f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE(MAX(id), 1), COUNT(*) > 0) FROM {table}")
+                if "object_memories" in tables:
+                    for row in source.execute("SELECT * FROM object_memories ORDER BY last_seen_at"):
+                        record = dict(row); record.pop("id")
+                        record["raw_model_output"] = json.loads(record["raw_model_output"] or "{}")
+                        self._remember(conn, ObjectMemoryRecord.model_validate(record))
+                conn.execute("INSERT INTO schema_migrations VALUES ('sqlite-import-v1', ?)", (datetime.now(timezone.utc).isoformat(),))
+            finally:
+                source.close()
+        if "homebox_inventory" in tables:
+            with self.connect() as conn:
+                rows = conn.execute("SELECT * FROM homebox_inventory").fetchall()
+            self.replace_homebox_inventory([HomeboxEntity(r["entity_id"], r["name"], r["description"], r["parent_id"], bool(r["is_location"]), r["quantity"]) for r in rows])
+        return counts

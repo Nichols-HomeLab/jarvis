@@ -21,6 +21,9 @@ class DetectionBox(BaseModel):
 
 
 class ScanResult(BaseModel):
+    image_width: int = 0
+    image_height: int = 0
+    detector: str = "vlm"
     camera: str
     zone: str
     summary: str = ""
@@ -93,6 +96,13 @@ class SearchResult(BaseModel):
     snapshot_path: str | None = None
     clip_path: str | None = None
     bbox: list[int] | None = None
+    memory_id: int | None = None
+    inventory_path: str | None = None
+    entity_id: str | None = None
+    retrieval_source: str | None = None
+    retrieval_score: float = 0
+    markdown: str = ""
+    relationships: list[str] = Field(default_factory=list)
 
 
 class CameraSnapshot(BaseModel):

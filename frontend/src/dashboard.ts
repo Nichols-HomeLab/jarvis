@@ -1,4 +1,5 @@
 import { requireSession } from "./auth";
+import { cameraView } from "./camera-view";
 
 await requireSession();
 
@@ -50,6 +51,8 @@ const homeboxInput = document.getElementById("homebox-input") as HTMLInputElemen
 const homeboxOutput = document.getElementById("homebox-output") as HTMLPreElement;
 const syncHomeboxButton = document.getElementById("sync-homebox") as HTMLButtonElement;
 let latestScan: ScanResult | null = null;
+let closeCameras: Array<() => void> = [];
+window.addEventListener("pagehide", () => closeCameras.forEach(close => close()));
 
 function renderScanBoxes() {
   scanBoxes.innerHTML = "";
@@ -144,6 +147,8 @@ function renderRecentMemory(items: SearchResult[]) {
 
 async function loadCameras() {
   const cameras = await request<CameraInfo[]>("/api/v2/cameras");
+  closeCameras.forEach(close => close());
+  closeCameras = [];
   cameraList.innerHTML = "";
   cameras.forEach((camera) => {
     const card = document.createElement("article");
@@ -174,6 +179,7 @@ async function loadCameras() {
     zone.textContent = camera.zone_name;
     card.append(name, zone);
     card.appendChild(button);
+    closeCameras.push(cameraView(camera.name, card));
     const identifyButton = document.createElement("button");
     identifyButton.textContent = `Identify on ${camera.name}`;
     identifyButton.addEventListener("click", async () => {

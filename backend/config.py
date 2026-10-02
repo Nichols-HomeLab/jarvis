@@ -33,6 +33,7 @@ class CameraConfig:
     zone_name: str
     enabled: bool = True
     frigate_name: str | None = None
+    detection_labels: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -82,6 +83,15 @@ class Settings:
     homebox_sync_interval_seconds: int = 900
     auto_scan_interval_seconds: int = 300
     min_detection_confidence: float = 0.5
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_dimensions: int = 384
+    embedding_cache_dir: str = "/opt/models/embeddings"
+    detector_url: str = ""
+    detector_mode: str = "grounding-dino"
+    detector_threshold: float = 0.25
+    crop_identification_limit: int = 5
+    frigate_rtsp_url: str = ""
+
 
     @property
     def database_path(self) -> Path:
@@ -114,6 +124,7 @@ def _parse_cameras(raw_value: str | None) -> list[CameraConfig]:
                 name=item["name"],
                 zone_name=item.get("zone_name", item["name"]),
                 enabled=bool(item.get("enabled", True)),
+                detection_labels=item.get("detection_labels", []),
                 frigate_name=item.get("frigate_name", item["name"]),
             )
         )
@@ -183,6 +194,14 @@ def load_settings() -> Settings:
         homebox_sync_interval_seconds=max(0, int(os.getenv("HOMEBOX_SYNC_INTERVAL_SECONDS", "900"))),
         auto_scan_interval_seconds=max(0, int(os.getenv("AUTO_SCAN_INTERVAL_SECONDS", "300"))),
         min_detection_confidence=float(os.getenv("MIN_DETECTION_CONFIDENCE", "0.5")),
+        embedding_model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
+        embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "384")),
+        embedding_cache_dir=os.getenv("EMBEDDING_CACHE_DIR", "/opt/models/embeddings"),
+        detector_url=os.getenv("DETECTOR_URL", "").rstrip("/"),
+        detector_mode=os.getenv("DETECTOR_MODE", "grounding-dino"),
+        detector_threshold=float(os.getenv("DETECTOR_THRESHOLD", "0.25")),
+        crop_identification_limit=int(os.getenv("CROP_IDENTIFICATION_LIMIT", "5")),
+        frigate_rtsp_url=os.getenv("FRIGATE_RTSP_URL", "").rstrip("/"),
     )
 
     settings.openai_base_url = settings.openai_base_url.rstrip("/")
@@ -196,5 +215,10 @@ def load_settings() -> Settings:
     settings.media_root.mkdir(parents=True, exist_ok=True)
     settings.camera_snapshot_dir.mkdir(parents=True, exist_ok=True)
     settings.camera_event_dir.mkdir(parents=True, exist_ok=True)
-    settings.database_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.database_url.startswith("sqlite:///"):
+        settings.database_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.detector_mode not in {"grounding-dino", "yolo"}:
+        raise ValueError("DETECTOR_MODE must be grounding-dino or yolo")
+    if not 0 < settings.detector_threshold <= 1 or not 0 <= settings.crop_identification_limit <= 20:
+        raise ValueError("Invalid detector threshold or crop identification limit")
     return settings

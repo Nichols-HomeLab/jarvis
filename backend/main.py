@@ -3,9 +3,15 @@ from __future__ import annotations
 import base64
 import asyncio
 import logging
+import httpx
+from fastapi.responses import StreamingResponse
+from backend.embeddings import MemoryEmbedder
+from backend.vision.streaming import CameraStreams
+from backend.vision.detector import DetectorVision
 import secrets
 import re
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Header, Request, Response
 from fastapi.responses import JSONResponse
@@ -41,8 +47,13 @@ from backend.vision.camera_manager import CameraManager
 settings = load_settings()
 log = logging.getLogger(__name__)
 session_gate = SessionGate(settings.access_token, settings.cors_origins)
-storage = Storage(settings.database_path)
+storage = Storage(settings.database_url, settings.embedding_dimensions)
+if storage.postgres:
+    imported = storage.migrate_sqlite(Path("data/jarvis_local.db"))
+    if imported:
+        log.info("Migrated retained SQLite history: %s", imported)
 frigate = FrigateClient(settings.frigate_url, settings.frigate_token, settings.frigate_user, settings.frigate_password)
+streams = CameraStreams(frigate, settings.frigate_rtsp_url)
 cameras = CameraManager(settings.cameras, settings.camera_snapshot_dir, frigate)
 model_client = OpenAICompatibleClient(
     base_url=settings.openai_base_url,
@@ -58,6 +69,8 @@ service = JarvisLocalService(
     WebSearch(settings.search_url),
     HomeAssistant(settings.home_assistant_url, settings.home_assistant_token, settings.ha_allowed_entities, settings.ha_dangerous_domains),
     HomeboxClient(settings.homebox_url, settings.homebox_api_key),
+    embedder=MemoryEmbedder(settings.embedding_model, settings.embedding_cache_dir),
+    detector=DetectorVision(settings, model_client) if settings.detector_url else None,
 )
 audio = LocalAudio(settings.stt_base_url, settings.stt_model, settings.tts_base_url, settings.tts_model, settings.tts_voice, settings.openai_api_key)
 _event_locks: set[str] = set()
@@ -75,7 +88,9 @@ async def ingest_frigate_event(event_id: str) -> dict[str, object]:
         image = await frigate.event_snapshot(event_id)
         target = settings.camera_event_dir / f"{event_id}.jpg"
         target.write_bytes(image)
-        scan = await model_client.analyze_snapshot(camera.name, camera.zone_name, image, service._public_media_path(target.as_posix()))
+        analyzer = service.detector or model_client
+        scan = await analyzer.analyze_snapshot(camera.name, camera.zone_name, image, service._public_media_path(target.as_posix()))
+        service.latest_scans[camera.name] = scan
         scan.detections = [item for item in scan.detections if item.confidence >= settings.min_detection_confidence]
         storage.save_scan(scan)
         storage.link_homebox_scan(scan)
@@ -99,6 +114,16 @@ async def periodic_scans() -> None:
         await asyncio.sleep(settings.auto_scan_interval_seconds)
 
 
+async def periodic_memory_index():
+    while True:
+        try:
+            count = await service.index_memories()
+        except Exception:
+            log.exception("Memory embedding indexing failed")
+            count = 0
+        await asyncio.sleep(1 if count else 15)
+
+
 async def periodic_homebox_sync() -> None:
     while True:
         try:
@@ -111,7 +136,7 @@ async def periodic_homebox_sync() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     subscriber.start()
-    tasks = []
+    tasks = [asyncio.create_task(periodic_memory_index())]
     if settings.auto_scan_interval_seconds and cameras.list_cameras():
         tasks.append(asyncio.create_task(periodic_scans()))
     if settings.homebox_sync_interval_seconds and service.homebox.configured:
@@ -197,7 +222,9 @@ class MotionEventRequest(BaseModel):
 async def health() -> dict[str, object]:
     return {
         "status": "ok",
-        "database": settings.database_path.as_posix(),
+        "database": "postgresql" if storage.postgres else "sqlite",
+        "memory": storage.memory_stats(),
+        "detector": settings.detector_mode if settings.detector_url else "vlm",
         "cameras": [camera.name for camera in cameras.list_cameras()],
         "frigate_configured": bool(settings.frigate_url),
         "stt_configured": bool(settings.stt_base_url),
@@ -244,6 +271,46 @@ async def scan_camera(camera_name: str) -> ScanResult:
         raise HTTPException(status_code=500, detail=f"Vision scan failed: {exc}") from exc
 
 
+@app.get("/api/v2/cameras/{camera_name}/stream")
+async def camera_stream(camera_name: str):
+    try:
+        camera = cameras.get_camera(camera_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown camera") from exc
+    context = streams.open(camera.frigate_name or camera.name)
+    try:
+        chunks, content_type = await context.__aenter__()
+    except (httpx.HTTPError, RuntimeError, OSError, asyncio.TimeoutError, StopAsyncIteration) as exc:
+        raise HTTPException(status_code=502, detail="Camera stream unavailable") from exc
+    async def body():
+        try:
+            async for chunk in chunks:
+                yield chunk
+        finally:
+            await context.__aexit__(None, None, None)
+    return StreamingResponse(body(), media_type=content_type,
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/v2/cameras/{camera_name}/detections")
+async def camera_detections(camera_name: str):
+    try:
+        cameras.get_camera(camera_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown camera") from exc
+    return service.latest_scans.get(camera_name)
+
+
+@app.get("/api/v2/memories/search")
+async def hybrid_memory_search(q: str):
+    return await service.hybrid_search(q)
+
+
+@app.get("/api/v2/memories/status")
+async def memory_status():
+    return storage.memory_stats()
+
+
 @app.post("/api/v2/cameras/{camera_name}/identify", response_model=IdentificationResult)
 async def identify_camera(camera_name: str, target: str = "") -> IdentificationResult:
     try:
@@ -280,7 +347,7 @@ async def homebox_contents(q: str):
 
 @app.get("/api/v2/tool-memory/search")
 async def search_tool_memory(q: str):
-    result = service.search_tool_memory(q)
+    result = await service.find_tool(q)
     if result is None:
         raise HTTPException(status_code=404, detail="No matching memory found")
     return result

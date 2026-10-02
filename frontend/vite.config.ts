@@ -5,6 +5,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    allowedHosts: ["jarvis.nicholstech.org"],
     proxy: {
       "/ws": {
         target: process.env.VITE_BACKEND_PROXY || "http://localhost:8000",
