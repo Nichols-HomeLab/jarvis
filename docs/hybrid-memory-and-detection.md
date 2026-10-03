@@ -92,3 +92,9 @@ password-bearing test URL. The PostgreSQL fixtures clear their named tables.
 Verify production separately: authenticated Homebox sync, an actual camera scan,
 multiple changing MJPEG frames, live box rendering, semantic search, and Flux's
 observed revision.
+
+`JARVIS_TEST_URL` and `JARVIS_TEST_TOKEN` can also drive
+`python tests/workshop_browser_smoke.py` after installing Playwright and Chromium.
+This checks the running dashboard, login, live frame decoding, rendered detections,
+and homepage controls. Use a frontend port-forward to isolate application checks
+from the edge SSO gate; verify edge TLS, middleware, and permissions separately.
