@@ -68,7 +68,8 @@ function renderScanBoxes() {
     box.style.width = `${(x2 - x1) * xScale}px`;
     box.style.height = `${(y2 - y1) * yScale}px`;
     const label = document.createElement("span");
-    label.textContent = `${item.description || item.label} ${Math.round(item.confidence * 100)}%`;
+    label.textContent = `${item.label} ${Math.round(item.confidence * 100)}%`;
+    box.title = item.description || item.label;
     box.appendChild(label);
     scanBoxes.appendChild(box);
   });

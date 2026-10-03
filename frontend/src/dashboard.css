@@ -119,7 +119,7 @@ button {
   gap: 16px;
 }
 .hidden { display: none; }
-.scan-preview { position: relative; margin-top: 20px; width: min(100%, 960px); }
+.scan-preview { overflow: hidden; position: relative; margin-top: 20px; width: min(100%, 960px); }
 .scan-preview img { display: block; width: 100%; height: auto; border-radius: 14px; }
 .scan-boxes { position: absolute; inset: 0; pointer-events: none; }
 .scan-box { position: absolute; border: 3px solid #55d3c7; box-shadow: 0 0 14px #55d3c780; }
@@ -204,3 +204,6 @@ input {
 
 .live-frame { overflow: hidden; }
 .live-boxes .scan-box span { top: 0; padding: 2px 4px; font-size: 11px; }
+
+.scan-boxes .scan-box, .live-boxes .scan-box { pointer-events: auto; }
+.scan-boxes .scan-box span { top: 0; }
