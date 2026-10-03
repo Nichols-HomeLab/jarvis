@@ -201,3 +201,6 @@ input {
 .live-frame img { display: block; width: 100%; height: auto; }
 .live-boxes { position: absolute; inset: 0; pointer-events: none; }
 .live-camera p { font-size: 12px; color: #91c4c3; }
+
+.live-frame { overflow: hidden; }
+.live-boxes .scan-box span { top: 0; padding: 2px 4px; font-size: 11px; }

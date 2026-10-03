@@ -23,6 +23,7 @@ def store(request, tmp_path):
             pytest.skip("Set TEST_DATABASE_URL to a disposable PostgreSQL database")
         storage = Storage(url, 3)
         with storage.connect() as conn:
+            conn.execute("DROP TABLE IF EXISTS schema_migrations")
             for table in ("memory_links", "memories", "object_detections", "object_memories", "homebox_inventory", "homebox_visual_sightings", "processed_camera_events"):
                 conn.execute(f"DELETE FROM {table}")
     else:
@@ -156,3 +157,37 @@ def test_identical_inventory_names_keep_distinct_locations_and_do_not_get_false_
     assert {item["entity_id"] for item in answer.alternative_locations} == {"one", "two"}
     answer = asyncio.run(service.handle_command(AssistantCommandRequest(text="What's in Workshop / Blue Parts Bin?")))
     assert answer.route == "homebox_contents" and "Red Screwdriver" in answer.text
+
+
+def test_crop_assessment_is_description_not_an_inventory_identity(store):
+    for assessment in ("Image too dark; brand unknown", "No readable label; model unknown"):
+        store.save_scan(ScanResult(camera="cam", zone="bench", snapshot_path="/media/a.jpg",
+            detections=[DetectionBox(label="drill", description=assessment, box=[1, 2, 10, 20], confidence=.9)]))
+    found = store.hybrid_search("drill")
+    assert len(found) == 1 and found[0].object_name == "drill"
+    assert found[0].description == "No readable label; model unknown"
+    assert found[0].bbox == [1, 2, 10, 20]
+
+
+def test_disconnect_cancellation_reaps_stream_process(monkeypatch):
+    import anyio
+    import sys
+    processes = []
+    spawn = asyncio.create_subprocess_exec
+    async def fake_ffmpeg(*args, **kwargs):
+        process = await spawn(sys.executable, "-u", "-c",
+            "import sys,time\nwhile True:\n sys.stdout.buffer.write(b'\\xff\\xd8frame\\xff\\xd9'); sys.stdout.buffer.flush(); time.sleep(.02)",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        processes.append(process)
+        return process
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_ffmpeg)
+    streams = CameraStreams(FrigateClient("http://frigate"), "rtsp://frigate:8554")
+    async def run():
+        with anyio.CancelScope() as scope:
+            async with streams.open("cam") as (frames, _):
+                assert b"image/jpeg" in await anext(frames)
+                scope.cancel()
+                await anyio.sleep(0)
+        assert streams.active == 0
+        assert processes[0].returncode is not None
+    anyio.run(run)

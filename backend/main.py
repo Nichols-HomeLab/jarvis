@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import anyio
 import logging
 import httpx
 from fastapi.responses import StreamingResponse
@@ -287,7 +288,10 @@ async def camera_stream(camera_name: str):
             async for chunk in chunks:
                 yield chunk
         finally:
-            await context.__aexit__(None, None, None)
+            # Starlette cancels the stream task when the browser disconnects.
+            # Cleanup must finish within that cancelled task's scope.
+            with anyio.CancelScope(shield=True):
+                await context.__aexit__(None, None, None)
     return StreamingResponse(body(), media_type=content_type,
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 

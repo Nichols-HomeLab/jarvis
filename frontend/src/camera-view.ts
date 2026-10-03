@@ -33,7 +33,8 @@ export function cameraView(cameraName: string, card: HTMLElement) {
       box.className = "scan-box";
       box.style.cssText = `left:${100*x1/scan.image_width}%;top:${100*y1/scan.image_height}%;width:${100*(x2-x1)/scan.image_width}%;height:${100*(y2-y1)/scan.image_height}%`;
       const label = document.createElement("span");
-      label.textContent = `${item.description || item.label} ${Math.round(item.confidence*100)}%`;
+      label.textContent = `${item.label} ${Math.round(item.confidence*100)}%`;
+      box.title = item.description || item.label;
       box.append(label);
       boxes.append(box);
     }

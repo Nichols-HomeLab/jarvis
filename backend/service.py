@@ -202,7 +202,7 @@ class JarvisLocalService:
         for label in disappeared:
             detection = before_labels[label]
             memory = ObjectMemoryRecord(
-                object_name=detection.description or detection.label,
+                object_name=detection.label,
                 object_category=detection.label,
                 description=detection.description,
                 camera_name=before.camera,
@@ -226,7 +226,7 @@ class JarvisLocalService:
         for label in appeared:
             detection = after_labels[label]
             memory = ObjectMemoryRecord(
-                object_name=detection.description or detection.label,
+                object_name=detection.label,
                 object_category=detection.label,
                 description=detection.description,
                 camera_name=after.camera,

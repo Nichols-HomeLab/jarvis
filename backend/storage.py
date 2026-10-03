@@ -344,7 +344,7 @@ class Storage:
                 )
 
                 memory = ObjectMemoryRecord(
-                    object_name=detection.description or detection.label,
+                    object_name=detection.label,
                     object_category=detection.label,
                     description=detection.description,
                     camera_name=scan.camera,

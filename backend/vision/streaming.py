@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import anyio
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
@@ -49,13 +50,19 @@ class CameraStreams:
                     yield frame
             yield body()
         finally:
-            if process.returncode is None:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), 5)
-                except asyncio.TimeoutError:
-                    process.kill()
-                    await process.wait()
+            with anyio.CancelScope(shield=True):
+                if process.returncode is None:
+                    try:
+                        process.terminate()
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        # Drain stdout as we reap; a full pipe can block wait().
+                        await asyncio.wait_for(process.communicate(), 5)
+                    except asyncio.TimeoutError:
+                        if process.returncode is None:
+                            process.kill()
+                        await process.communicate()
 
     @staticmethod
     async def _frames(reader):
