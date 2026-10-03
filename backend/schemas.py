@@ -103,6 +103,7 @@ class SearchResult(BaseModel):
     retrieval_score: float = 0
     markdown: str = ""
     relationships: list[str] = Field(default_factory=list)
+    alternative_locations: list[dict[str, str]] = Field(default_factory=list)
 
 
 class CameraSnapshot(BaseModel):

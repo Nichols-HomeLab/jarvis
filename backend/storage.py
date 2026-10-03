@@ -233,8 +233,9 @@ class Storage:
         if query.endswith("s") and not query.endswith("ss"):
             variants.append(query[:-1])
         with self.connect() as conn:
-            row = None
-            for term in variants:
+            path_rows = conn.execute("SELECT * FROM homebox_inventory WHERE lower(path)=? AND (?=0 OR is_location=1)", (query, int(location_only))).fetchall()
+            row = path_rows[0] if path_rows else None
+            for term in ([] if row is not None else variants):
                 row = conn.execute(
                     """SELECT * FROM homebox_inventory
                        WHERE (lower(name) LIKE ? ESCAPE '!' OR lower(description) LIKE ? ESCAPE '!')
@@ -250,6 +251,9 @@ class Storage:
             return None
         result = dict(row)
         with self.connect() as conn:
+            alternatives = ([r for r in path_rows if r["entity_id"] != result["entity_id"]] if path_rows else
+                conn.execute("SELECT entity_id, path FROM homebox_inventory WHERE lower(name)=? AND entity_id <> ?", (result["name"].lower(), result["entity_id"])).fetchall())
+            result["alternatives"] = [dict(r) for r in alternatives]
             sighting = conn.execute(
                 "SELECT * FROM homebox_visual_sightings WHERE entity_id = ? ORDER BY observed_at DESC LIMIT 1",
                 (result["entity_id"],),
@@ -281,7 +285,11 @@ class Storage:
                 ]
                 if not candidates:
                     continue
-                entity = max(candidates, key=lambda item: len(item["name"]))
+                longest = max(len(item["name"]) for item in candidates)
+                candidates = [item for item in candidates if len(item["name"]) == longest]
+                if len(candidates) != 1:
+                    continue  # identical labels cannot establish which inventory instance was seen
+                entity = candidates[0]
                 conn.execute(
                     """INSERT INTO homebox_visual_sightings
                        (entity_id, camera_name, zone_name, snapshot_path,
@@ -589,12 +597,11 @@ class Storage:
         results.sort(key=lambda r: (r.retrieval_score, r.last_seen_at), reverse=True)
         # A repeated camera sighting must not crowd out other candidates.
         unique = {}
-        seen_names = set()
+        inventory_names = {r.object_name.lower() for r in results if r.entity_id}
         for result in results:
             name = result.object_name.lower()
-            if name in seen_names:
+            if not result.entity_id and name in inventory_names:
                 continue
-            seen_names.add(name)
             unique.setdefault(result.entity_id or name, result)
         return list(unique.values())[:limit]
 

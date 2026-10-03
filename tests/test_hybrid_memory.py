@@ -129,3 +129,30 @@ def test_retained_sqlite_import_is_idempotent_and_keeps_bbox(store, tmp_path):
     assert store.hybrid_search("wrench")[0].bbox == [10, 20, 90, 150]
     assert store.migrate_sqlite(source.db_path) == {}
     assert len(store.recent_memories()) == 1
+
+
+def test_identical_inventory_names_keep_distinct_locations_and_do_not_get_false_visual_links(store):
+    store.replace_homebox_inventory([
+        HomeboxEntity("shop-a", "Garage", "", None, True, 0),
+        HomeboxEntity("shop-b", "Workshop", "", None, True, 0),
+        HomeboxEntity("box-a", "Blue Parts Bin", "", "shop-a", True, 0),
+        HomeboxEntity("box-b", "Blue Parts Bin", "", "shop-b", True, 0),
+        HomeboxEntity("one", "Red Screwdriver", "", "box-a", False, 1),
+        HomeboxEntity("two", "Red Screwdriver", "", "box-b", False, 1)])
+    results = store.hybrid_search("red screwdriver")
+    assert {r.entity_id for r in results} == {"one", "two"}
+    scan = ScanResult(camera="cam", zone="bench", snapshot_path="/media/a.jpg",
+        detections=[DetectionBox(label="bin", description="Blue Parts Bin", box=[1, 2, 10, 20], confidence=.9)])
+    assert store.link_homebox_scan(scan) == 0
+    assert len(store.find_homebox("Blue Parts Bin")["alternatives"]) == 1
+
+    box = store.find_homebox("Workshop / Blue Parts Bin", location_only=True)
+    assert box["entity_id"] == "box-b" and not box["alternatives"]
+    from backend.service import JarvisLocalService
+    from backend.schemas import AssistantCommandRequest
+    service = JarvisLocalService(Settings(), store, None, None, None)
+    answer = asyncio.run(service.find_tool("red screwdriver"))
+    assert answer.inventory_path is None and answer.bbox is None
+    assert {item["entity_id"] for item in answer.alternative_locations} == {"one", "two"}
+    answer = asyncio.run(service.handle_command(AssistantCommandRequest(text="What's in Workshop / Blue Parts Bin?")))
+    assert answer.route == "homebox_contents" and "Red Screwdriver" in answer.text

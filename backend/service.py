@@ -137,7 +137,15 @@ class JarvisLocalService:
 
     async def find_tool(self, query: str):
         results = await self.hybrid_search(query)
-        return results[0] if results else self.storage.find_last_seen(query)
+        if results:
+            result = results[0]
+            duplicates = [r for r in results if r.entity_id and r.object_name.lower() == result.object_name.lower()]
+            if len(duplicates) > 1:
+                return result.model_copy(update={"inventory_path": None, "zone_name": "", "entity_id": None,
+                    "memory_id": None, "camera_name": "", "bbox": None, "snapshot_path": None, "relationships": [],
+                    "action": "ambiguous_inventory", "alternative_locations": [{"entity_id": r.entity_id, "path": r.inventory_path} for r in duplicates]})
+            return result
+        return self.storage.find_last_seen(query)
 
     async def project_bounding_box(self, request: ProjectBoundingBoxRequest) -> None:
         await self.projector_hub.broadcast(
@@ -257,6 +265,8 @@ class JarvisLocalService:
             box = self.storage.find_homebox(target, location_only=True)
             if box is None:
                 return CommandResponse(text=f"Homebox has no synced box or location matching {target}.", route="homebox_contents")
+            if box.get("alternatives"):
+                return CommandResponse(text=f"Homebox has multiple locations named {box['name']}. Specify the full location path.", route="homebox_ambiguous")
             contents = self.storage.homebox_contents(box["entity_id"])
             names = ", ".join(item["name"] for item in contents if not item["is_location"])
             camera_note = ""
@@ -313,6 +323,10 @@ class JarvisLocalService:
                     route="tool_memory_search",
                 )
 
+            if result.alternative_locations:
+                paths = "; ".join(item["path"] for item in result.alternative_locations)
+                return CommandResponse(text=f"Homebox has multiple entries named {result.object_name}: {paths}. Specify the box or location to identify the right item.",
+                    route="homebox_ambiguous", search_result=result)
             if result.inventory_path:
                 return CommandResponse(text=f"Homebox lists {result.object_name} at {result.inventory_path}. This is the recorded inventory location.",
                     route="homebox_search", search_result=result)

@@ -342,6 +342,8 @@ async def homebox_contents(q: str):
     box = storage.find_homebox(q, location_only=True)
     if box is None:
         raise HTTPException(status_code=404, detail="No matching Homebox box or location")
+    if box.get("alternatives"):
+        raise HTTPException(status_code=409, detail={"message": "Multiple locations share this name", "locations": [{"entity_id": box["entity_id"], "path": box["path"]}, *box["alternatives"]]})
     return {"location": box, "contents": storage.homebox_contents(box["entity_id"])}
 
 
