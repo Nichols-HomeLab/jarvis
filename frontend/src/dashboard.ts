@@ -7,7 +7,7 @@ type CameraInfo = {
   name: string;
   zone_name: string;
   enabled: boolean;
-  frigate_name: string;
+  source: "rtsp" | "frigate";
 };
 
 type SearchResult = {
@@ -154,7 +154,7 @@ async function loadCameras() {
   closeCameras.forEach(close => close());
   closeCameras = [];
   cameraList.innerHTML = "";
-  if (!cameras.length) cameraList.textContent = "No cameras configured. Add a Frigate camera above to get started.";
+  if (!cameras.length) cameraList.textContent = "No cameras configured. Add an RTSP stream above to get started.";
   cameras.forEach((camera) => {
     const card = document.createElement("article");
     card.className = "camera-card";
@@ -181,7 +181,7 @@ async function loadCameras() {
     name.textContent = camera.name;
     const zone = document.createElement("div");
     zone.className = "camera-zone";
-    zone.textContent = `${camera.zone_name} · Frigate: ${camera.frigate_name}`;
+    zone.textContent = `${camera.zone_name} · ${camera.source === "rtsp" ? "Direct RTSP" : "Frigate"}`;
     card.append(name, zone);
     card.appendChild(button);
     closeCameras.push(cameraView(camera.name, card));
@@ -236,7 +236,7 @@ addCameraForm.addEventListener("submit", async (event) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: value("name"), frigate_name: value("frigate_name"), zone_name: value("zone_name"),
+        name: value("name"), rtsp_url: value("rtsp_url"), zone_name: value("zone_name"),
         detection_labels: value("detection_labels").split(",").map(v => v.trim()).filter(Boolean),
       }),
     });

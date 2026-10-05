@@ -6,7 +6,22 @@ See [Bifrost, Frigate, and Homebox Inventory](bifrost-homebox-inventory.md) for 
 
 Set `JARVIS_ACCESS_TOKEN` to a unique random value of at least 32 characters before starting the backend. Each browser page prompts for it once and receives an HTTP-only, one-day session cookie. API, media, and WebSocket access require that session. Configure `CORS_ORIGINS` with the exact browser origins used from other hosts, including scheme and port. Frigate webhooks and satellites use their separate `MOTION_WEBHOOK_TOKEN` and `SATELLITE_TOKEN`, not the browser token. Do not expose the Vite development server or the Frigate/MQTT endpoints to the public internet; use a trusted LAN or a TLS reverse proxy. Change the access token to invalidate all browser sessions.
 
-## Frigate
+## Direct RTSP cameras
+
+Open the Vision Dashboard and use **Add camera**. Enter a Jarvis name, the full
+camera URL such as `rtsp://user:password@camera:554/stream`, a zone, and optional
+detection labels. Percent-encode special characters in the username or password.
+Jarvis uses FFmpeg over RTSP/TCP for both snapshots and browser MJPEG live view.
+No Frigate entry is needed. Live views show periodically refreshed detection
+boxes; they are observations rather than per-frame tracking.
+
+Camera URLs persist in the active database, are masked while entered, and never
+appear in camera-list or validation responses. `JARVIS_CAMERAS_JSON` can seed an
+empty database with `rtsp_url` entries; subsequent changes use the dashboard.
+An empty list remains empty across restarts. Camera removal stops future scans,
+and the live-view process is reaped when the browser closes or refreshes a view.
+
+## Optional legacy Frigate integration
 
 Set `FRIGATE_URL` to an internal Frigate endpoint, such as `http://frigate:5000`, or to the authenticated port `8971` behind HTTPS. If authentication is enabled, provide `FRIGATE_TOKEN` or `FRIGATE_USER` and `FRIGATE_PASSWORD`. Use camera names exactly as Frigate exposes them in `JARVIS_CAMERAS_JSON`; `name` is Jarvis's command name, `frigate_name` is the Frigate camera ID, and `zone_name` is the spoken location.
 

@@ -3,25 +3,26 @@ from __future__ import annotations
 import asyncio
 import anyio
 from contextlib import asynccontextmanager
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
 
 class CameraStreams:
-    """Authenticated browser MJPEG from a configured Frigate RTSP restream."""
+    """Direct RTSP snapshots and browser MJPEG, with legacy Frigate support."""
     def __init__(self, frigate, rtsp_url: str = "", transport=None):
         self.frigate, self.rtsp_url, self.transport = frigate, rtsp_url, transport
         self.active = 0
 
     @asynccontextmanager
-    async def open(self, camera: str):
+    async def open(self, camera: str, rtsp_url: str = ""):
         if self.active >= 4:
             raise RuntimeError("Four camera streams are already open")
         self.active += 1
         try:
-            if self.rtsp_url:
-                async with self._rtsp(camera) as stream:
+            if rtsp_url or self.rtsp_url:
+                url = rtsp_url or f"{self.rtsp_url}/{quote(camera, safe='')}"
+                async with self._rtsp(url) as stream:
                     yield stream, "multipart/x-mixed-replace; boundary=frame"
             else:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(15, read=None), transport=self.transport) as client:
@@ -34,16 +35,27 @@ class CameraStreams:
         finally:
             self.active -= 1
 
+    async def snapshot(self, rtsp_url: str) -> bytes:
+        async with self._rtsp(rtsp_url, snapshot=True) as frames:
+            frame = await anext(frames)
+            return frame.split(b"\r\n\r\n", 1)[1][:-2]
+
     @asynccontextmanager
-    async def _rtsp(self, camera):
+    async def _rtsp(self, rtsp_url: str, snapshot: bool = False):
+        output = ["-frames:v", "1"] if snapshot else ["-vf", "fps=3,scale=-2:720"]
+        url = urlsplit(rtsp_url)
+        tls = ["-tls_verify", "1", "-verifyhost", url.hostname] if url.scheme == "rtsps" else []
         process = await asyncio.create_subprocess_exec(
             "ffmpeg", "-nostdin", "-loglevel", "error", "-rtsp_transport", "tcp",
-            "-i", f"{self.rtsp_url}/{quote(camera, safe='')}", "-an", "-threads", "2",
-            "-vf", "fps=3,scale=-2:720", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+            *tls, "-i", rtsp_url, "-an", "-threads", "2",
+            *output, "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         try:
             frames = self._frames(process.stdout)
-            first = await asyncio.wait_for(anext(frames), 20)
+            try:
+                first = await asyncio.wait_for(anext(frames), 20)
+            except (asyncio.TimeoutError, StopAsyncIteration) as exc:
+                raise RuntimeError("Camera did not return a video frame; check the URL, credentials, and connection") from exc
             async def body():
                 yield first
                 async for frame in frames:

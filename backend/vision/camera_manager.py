@@ -8,10 +8,12 @@ import uuid
 from backend.config import CameraConfig
 from backend.schemas import CameraSnapshot
 from backend.vision.frigate import FrigateClient
+from backend.vision.streaming import CameraStreams
 
 
 class CameraManager:
-    def __init__(self, cameras: list[CameraConfig], snapshot_dir: Path, frigate: FrigateClient, storage=None):
+    def __init__(self, cameras: list[CameraConfig], snapshot_dir: Path, frigate: FrigateClient, storage=None, streams=None):
+        self.streams = streams or CameraStreams(frigate)
         self.storage = storage
         self.configs = cameras
         if storage is not None:
@@ -48,5 +50,7 @@ class CameraManager:
         camera = self.get_camera(camera_name)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         target = self.snapshot_dir / f"{camera_name}_{timestamp}_{uuid.uuid4().hex[:8]}.jpg"
-        target.write_bytes(await self.frigate.latest_frame(camera.frigate_name or camera.name))
+        image = (await self.streams.snapshot(camera.rtsp_url) if camera.rtsp_url
+                 else await self.frigate.latest_frame(camera.frigate_name or camera.name))
+        target.write_bytes(image)
         return CameraSnapshot(camera=camera_name, snapshot_path=target.as_posix())

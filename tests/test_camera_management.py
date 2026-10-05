@@ -22,11 +22,11 @@ class CameraManagementTests(unittest.TestCase):
             self.assertEqual(configs, [])
             restarted = CameraManager([CameraConfig("old", "old")], root, None, Storage(root / "jarvis.db"))
             self.assertEqual(restarted.list_cameras(), [])
-            restarted.add_camera(CameraConfig("bench", "Workshop", frigate_name="Workshop", detection_labels=["drill"]))
+            restarted.add_camera(CameraConfig("bench", "Workshop", rtsp_url="rtsp://user:password@camera:554/stream", detection_labels=["drill"]))
             with self.assertRaises(ValueError):
                 restarted.add_camera(CameraConfig("bench", "other"))
             restored = CameraManager([], root, None, store)
-            self.assertEqual(restored.get_camera("bench").frigate_name, "Workshop")
+            self.assertEqual(restored.get_camera("bench").rtsp_url, "rtsp://user:password@camera:554/stream")
             self.assertEqual(restored.get_camera("bench").detection_labels, ["drill"])
             self.assertEqual(_parse_cameras(None), [])
 
@@ -41,16 +41,24 @@ class CameraManagementTests(unittest.TestCase):
             with patch("backend.config.load_settings", return_value=settings):
                 import backend.main as api
             client = TestClient(api.app)
-            payload = {"name": "workbench", "frigate_name": "Workshop", "zone_name": "Main bench", "detection_labels": ["drill"]}
+            payload = {"name": "workbench", "rtsp_url": "rtsp://user:password@camera:554/stream?token=private", "zone_name": "Main bench", "detection_labels": ["drill"]}
             self.assertEqual(client.post("/api/v2/cameras", json=payload).status_code, 401)
             self.assertEqual(client.delete("/api/v2/cameras/workbench").status_code, 401)
             self.assertEqual(client.post("/api/v2/auth/login", json={"token": settings.access_token}).status_code, 200)
             self.assertEqual(client.post("/api/v2/cameras", json=payload, headers={"Origin": "https://evil.example"}).status_code, 403)
-            for field, bad in [("name", "../bad"), ("frigate_name", "x?bad"), ("zone_name", "   ")]:
-                self.assertEqual(client.post("/api/v2/cameras", json=payload | {field: bad}).status_code, 422)
-            self.assertEqual(client.post("/api/v2/cameras", json=payload).status_code, 201)
+            for field, bad in [("name", "../bad"), ("rtsp_url", "http://camera/stream"), ("rtsp_url", "rtsp://camera:99999/stream"), ("rtsp_url", "rtsp://user:password@camera/bad path"), ("rtsp_url", "rtsp://camera/stream#fragment"), ("zone_name", "   ")]:
+                response = client.post("/api/v2/cameras", json=payload | {field: bad})
+                self.assertEqual(response.status_code, 422)
+                self.assertNotIn("password", response.text)
+                self.assertNotIn("token=private", response.text)
+            response = client.post("/api/v2/cameras", json=payload)
+            self.assertEqual(response.status_code, 201)
+            self.assertNotIn("rtsp_url", response.text)
             self.assertEqual(client.post("/api/v2/cameras", json=payload).status_code, 409)
-            self.assertEqual(client.get("/api/v2/cameras").json()[0]["frigate_name"], "Workshop")
+            response = client.get("/api/v2/cameras")
+            self.assertEqual(response.json()[0]["source"], "rtsp")
+            self.assertNotIn("password", response.text)
+            self.assertNotIn("token=private", response.text)
             self.assertEqual(api.settings.cameras[0].detection_labels, ["drill"])
             self.assertEqual(client.delete("/api/v2/cameras/workbench").status_code, 200)
             self.assertEqual(client.delete("/api/v2/cameras/workbench").status_code, 404)

@@ -1,10 +1,10 @@
 # Jarvis Workshop Assistant
 
-A local workshop assistant with voice commands, Frigate camera capture, tool memory, a projector view, research, and controlled Home Assistant actions. The original macOS `server.py` remains in the repository for reference; the Docker stack runs `backend.main`.
+A local workshop assistant with voice commands, direct RTSP camera capture, tool memory, a projector view, research, and controlled Home Assistant actions. The original macOS `server.py` remains in the repository for reference; the Docker stack runs `backend.main`.
 
 ## Start
 
-1. Copy `.env.example` to `.env` and set a unique `JARVIS_ACCESS_TOKEN`, the reachable Bifrost and Frigate URLs, camera names, and Home Assistant allowlist.
+1. Copy `.env.example` to `.env` and set a unique `JARVIS_ACCESS_TOKEN`, the reachable Bifrost URL and Home Assistant allowlist; add camera streams in the dashboard.
 2. Configure router, research, and vision provider/model routes in Bifrost. Ensure Bifrost and speech endpoints are reachable from Docker. The bundled SearXNG service handles web and image search.
 3. Run `docker compose up --build`.
 
@@ -20,34 +20,35 @@ The browser uses push to talk. STT and TTS run through the endpoints configured 
 
 ## Example Flow
 
-1. Say or type “Scan the pegboard.” Jarvis fetches `/<camera>/latest.jpg` from Frigate, analyzes the frame with the configured vision model, and stores detections in hybrid memory.
+1. Say or type “Scan the pegboard.” Jarvis captures a frame directly from the camera’s RTSP stream, analyzes the frame with the configured vision model, and stores detections in hybrid memory.
 2. Ask “Where are my screwdrivers?” Jarvis searches object memory, gives the last observed zone and time, and sends the stored image and box to the projector page.
 3. Ask “Research a Dell R630 and project its footprint.” Jarvis searches through SearXNG, asks the research model for sourced dimensions, and displays an outline. With projector measurements set to zero, this outline is explicitly illustrative.
-4. Ask “What is in the blue parts bin?” Jarvis answers from its read-only Homebox inventory cache, including nested items. Ask “Identify the tool on the workbench” for a fresh Frigate snapshot, Bifrost vision analysis, and web image candidates.
+4. Ask “What is in the blue parts bin?” Jarvis answers from its read-only Homebox inventory cache, including nested items. Ask “Identify the tool on the workbench” for a fresh camera snapshot, Bifrost vision analysis, and web image candidates.
 
 ## Configuration
 
-See [.env.example](.env.example) and [Operations](docs/operations.md). Configure `BIFROST_BASE_URL` and all three `BIFROST_*_MODEL` routes before startup; Jarvis refuses to fall back to a different model provider. Set `BIFROST_API_KEY` only when required. Configure `FRIGATE_URL` and `JARVIS_CAMERAS_JSON` for cameras; `HOMEBOX_URL` and `HOMEBOX_API_KEY` are optional until Homebox is running again.
+See [.env.example](.env.example) and [Operations](docs/operations.md). Configure `BIFROST_BASE_URL` and all three `BIFROST_*_MODEL` routes before startup; Jarvis refuses to fall back to a different model provider. Set `BIFROST_API_KEY` only when required. Add RTSP cameras from the dashboard; `HOMEBOX_URL` and `HOMEBOX_API_KEY` are optional until Homebox is running again.
 
 Add cameras from the dashboard's **Add camera** form. Supply a unique Jarvis name,
-the exact Frigate camera name (case sensitive), a zone, and optional comma-separated
-detection labels. Live view and scans use the existing Frigate connection. Each
-camera card also has a remove control. Settings persist in the active database;
+the camera's full `rtsp://` URL (including credentials and stream path when needed),
+a zone, and optional comma-separated detection labels. Jarvis connects directly
+to the camera over TCP for live view and snapshots; Frigate setup is not required.
+The URL input is masked, and saved credentials are omitted from API responses.
+Each camera card also has a remove control. Settings persist in the active database;
 `JARVIS_CAMERAS_JSON` seeds it only on first startup. An empty list stays empty,
 and cameras added after startup join automatic scans without a restart. Removing
-a camera stops future scans without deleting its historical observations or
-changing the camera in Frigate.
+a camera stops future scans without deleting its historical observations.
 
-Frigate provides latest frames and event snapshots. Jarvis can read Frigate’s RTSP restream without direct camera credentials. The Home Assistant adapter only accepts explicitly allowed entity IDs; lock, cover, climate, and switch writes require a second confirmation. The LLM cannot supply an arbitrary URL or direct API call.
+Optional legacy Frigate configurations can still provide latest frames and completed-event snapshots. The Home Assistant adapter only accepts explicitly allowed entity IDs; lock, cover, climate, and switch writes require a second confirmation. The LLM cannot supply an arbitrary URL or direct API call.
 
 ## What Is Implemented
 
 - Frigate latest frame capture, completed event ingestion through optional MQTT, and event snapshots
 - Snapshot based tool detection through a vision model
-- Configurable periodic Frigate scans and completed-event ingestion for automatic sightings
+- Direct RTSP snapshot capture and configurable periodic scans for automatic sightings
 - PostgreSQL/pgvector semantic retrieval and explicit Markdown-style inventory relationships
 - Grounding DINO / YOLO detector service with crop-based VLM identification
-- Native Frigate RTSP live view with refreshed bounding boxes
+- Direct RTSP live view with refreshed bounding boxes
 - Read-only Homebox inventory sync, nested box contents, and tentative camera-to-box label matches
 - Image-assisted identification with SearXNG image candidates; camera images stay on the local model path
 - Websocket projector cards, bounding boxes, and sourced dimension footprints

@@ -34,6 +34,7 @@ class CameraConfig:
     enabled: bool = True
     frigate_name: str | None = None
     detection_labels: list[str] = field(default_factory=list)
+    rtsp_url: str = field(default="", repr=False)
 
 
 @dataclass(slots=True)
@@ -115,6 +116,7 @@ def _parse_cameras(raw_value: str | None) -> list[CameraConfig]:
                 enabled=bool(item.get("enabled", True)),
                 detection_labels=item.get("detection_labels", []),
                 frigate_name=item.get("frigate_name", item["name"]),
+                rtsp_url=item.get("rtsp_url", ""),
             )
         )
     return cameras

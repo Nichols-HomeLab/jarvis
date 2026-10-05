@@ -28,14 +28,15 @@
         </div>
         <details class="camera-setup" open>
           <summary>Add camera</summary>
-          <p>Connect a camera already set up in Frigate. Use its exact Frigate name, including capitalization.</p>
+          <p>Connect directly to a camera's RTSP stream. Include its username and password in the URL when required.</p>
           <form id="add-camera-form" class="camera-form">
             <label>Jarvis camera name<input name="name" required maxlength="80" pattern="[A-Za-z0-9_-]+" placeholder="workbench" autocomplete="off"></label>
-            <label>Frigate camera name<input name="frigate_name" required maxlength="80" pattern="[A-Za-z0-9_-]+" placeholder="Workshop" autocomplete="off"></label>
+            <label>RTSP stream URL<input name="rtsp_url" type="password" required maxlength="2048" placeholder="rtsp://user:password@camera:554/stream" autocomplete="new-password" spellcheck="false"></label>
             <label>Zone<input name="zone_name" required maxlength="120" placeholder="Main workbench" autocomplete="off"></label>
             <label>Detection labels (optional)<input name="detection_labels" placeholder="drill, screwdriver, storage box" autocomplete="off"></label>
             <button type="submit">Add camera</button>
           </form>
+          <p>Use the camera's full stream URL, including its path. Encode special characters in credentials. The URL is stored privately and is not displayed on camera cards.</p>
           <p id="camera-status" role="status" aria-live="polite"></p>
         </details>
         <div id="camera-list" class="camera-grid"></div>

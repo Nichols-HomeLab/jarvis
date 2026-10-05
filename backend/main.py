@@ -13,12 +13,14 @@ import secrets
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Header, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
+from fastapi.exceptions import RequestValidationError
 
 from backend.config import CameraConfig, load_settings
 from backend.homebox import HomeboxClient
@@ -55,7 +57,7 @@ if storage.postgres:
         log.info("Migrated retained SQLite history: %s", imported)
 frigate = FrigateClient(settings.frigate_url, settings.frigate_token, settings.frigate_user, settings.frigate_password)
 streams = CameraStreams(frigate, settings.frigate_rtsp_url)
-cameras = CameraManager(settings.cameras, settings.camera_snapshot_dir, frigate, storage)
+cameras = CameraManager(settings.cameras, settings.camera_snapshot_dir, frigate, storage, streams)
 model_client = OpenAICompatibleClient(
     base_url=settings.openai_base_url,
     api_key=settings.openai_api_key,
@@ -83,7 +85,7 @@ async def ingest_frigate_event(event_id: str) -> dict[str, object]:
     _event_locks.add(event_id)
     try:
         event = await frigate.event(event_id)
-        camera = next((c for c in cameras.list_cameras() if (c.frigate_name or c.name) == event.get("camera")), None)
+        camera = next((c for c in cameras.list_cameras() if not c.rtsp_url and (c.frigate_name or c.name) == event.get("camera")), None)
         if camera is None:
             return {"event_id": event_id, "status": "camera_not_configured"}
         image = await frigate.event_snapshot(event_id)
@@ -152,6 +154,16 @@ async def lifespan(_app: FastAPI):
         subscriber.stop()
 
 app = FastAPI(title="Jarvis Local Workshop API", version="0.3.0", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_request, exc):
+    # Camera URLs may contain passwords or query tokens. Never echo inputs.
+    return JSONResponse(status_code=422, content={"detail": [
+        {"loc": error["loc"], "msg": error["msg"], "type": error["type"]}
+        for error in exc.errors()
+    ]})
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -243,7 +255,7 @@ async def list_cameras() -> list[dict[str, object]]:
         {
             "name": camera.name,
             "zone_name": camera.zone_name,
-            "frigate_name": camera.frigate_name or camera.name,
+            "source": "rtsp" if camera.rtsp_url else "frigate",
             "enabled": camera.enabled,
             "detection_labels": camera.detection_labels,
         }
@@ -253,9 +265,24 @@ async def list_cameras() -> list[dict[str, object]]:
 
 class AddCameraRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
-    frigate_name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    rtsp_url: SecretStr = Field(min_length=1, max_length=2048)
     zone_name: str = Field(min_length=1, max_length=120)
     detection_labels: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("rtsp_url")
+    @classmethod
+    def validate_rtsp(cls, secret):
+        value = secret.get_secret_value().strip()
+        try:
+            url = urlsplit(value)
+            valid = (url.scheme in {"rtsp", "rtsps"} and bool(url.hostname)
+                     and not url.fragment and (url.port is None or 1 <= url.port <= 65535)
+                     and not any(char.isspace() or ord(char) < 32 for char in value))
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("Enter a valid rtsp:// or rtsps:// camera URL; encode special characters in credentials")
+        return SecretStr(value)
 
     @field_validator("zone_name")
     @classmethod
@@ -275,12 +302,13 @@ class AddCameraRequest(BaseModel):
 
 @app.post("/api/v2/cameras", status_code=201)
 async def add_camera(payload: AddCameraRequest):
-    camera = CameraConfig(**payload.model_dump())
+    public = payload.model_dump(exclude={"rtsp_url"})
+    camera = CameraConfig(**public, rtsp_url=payload.rtsp_url.get_secret_value())
     try:
         cameras.add_camera(camera)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return payload.model_dump() | {"enabled": True}
+    return public | {"enabled": True, "source": "rtsp"}
 
 
 @app.delete("/api/v2/cameras/{camera_name}")
@@ -323,7 +351,7 @@ async def camera_stream(camera_name: str):
         camera = cameras.get_camera(camera_name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Unknown camera") from exc
-    context = streams.open(camera.frigate_name or camera.name)
+    context = streams.open(camera.frigate_name or camera.name, camera.rtsp_url)
     try:
         chunks, content_type = await context.__aenter__()
     except (httpx.HTTPError, RuntimeError, OSError, asyncio.TimeoutError, StopAsyncIteration) as exc:
