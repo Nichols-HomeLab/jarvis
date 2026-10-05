@@ -26,6 +26,18 @@
           <h2>Cameras</h2>
           <button id="refresh-cameras">Refresh</button>
         </div>
+        <details class="camera-setup" open>
+          <summary>Add camera</summary>
+          <p>Connect a camera already set up in Frigate. Use its exact Frigate name, including capitalization.</p>
+          <form id="add-camera-form" class="camera-form">
+            <label>Jarvis camera name<input name="name" required maxlength="80" pattern="[A-Za-z0-9_-]+" placeholder="workbench" autocomplete="off"></label>
+            <label>Frigate camera name<input name="frigate_name" required maxlength="80" pattern="[A-Za-z0-9_-]+" placeholder="Workshop" autocomplete="off"></label>
+            <label>Zone<input name="zone_name" required maxlength="120" placeholder="Main workbench" autocomplete="off"></label>
+            <label>Detection labels (optional)<input name="detection_labels" placeholder="drill, screwdriver, storage box" autocomplete="off"></label>
+            <button type="submit">Add camera</button>
+          </form>
+          <p id="camera-status" role="status" aria-live="polite"></p>
+        </details>
         <div id="camera-list" class="camera-grid"></div>
         <div id="scan-preview" class="scan-preview hidden"><img id="scan-image" alt="Latest camera scan"><div id="scan-boxes" class="scan-boxes"></div></div>
       </section>

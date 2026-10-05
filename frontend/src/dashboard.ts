@@ -7,6 +7,7 @@ type CameraInfo = {
   name: string;
   zone_name: string;
   enabled: boolean;
+  frigate_name: string;
 };
 
 type SearchResult = {
@@ -35,6 +36,8 @@ type IdentificationResult = {
 
 const cameraList = document.getElementById("camera-list") as HTMLDivElement;
 const refreshCamerasButton = document.getElementById("refresh-cameras") as HTMLButtonElement;
+const addCameraForm = document.getElementById("add-camera-form") as HTMLFormElement;
+const cameraStatus = document.getElementById("camera-status") as HTMLParagraphElement;
 const commandForm = document.getElementById("command-form") as HTMLFormElement;
 const commandInput = document.getElementById("command-input") as HTMLInputElement;
 const commandOutput = document.getElementById("command-output") as HTMLPreElement;
@@ -151,6 +154,7 @@ async function loadCameras() {
   closeCameras.forEach(close => close());
   closeCameras = [];
   cameraList.innerHTML = "";
+  if (!cameras.length) cameraList.textContent = "No cameras configured. Add a Frigate camera above to get started.";
   cameras.forEach((camera) => {
     const card = document.createElement("article");
     card.className = "camera-card";
@@ -177,7 +181,7 @@ async function loadCameras() {
     name.textContent = camera.name;
     const zone = document.createElement("div");
     zone.className = "camera-zone";
-    zone.textContent = camera.zone_name;
+    zone.textContent = `${camera.zone_name} · Frigate: ${camera.frigate_name}`;
     card.append(name, zone);
     card.appendChild(button);
     closeCameras.push(cameraView(camera.name, card));
@@ -197,9 +201,54 @@ async function loadCameras() {
       }
     });
     card.appendChild(identifyButton);
+    const removeButton = document.createElement("button");
+    removeButton.textContent = "Remove camera";
+    removeButton.className = "remove-camera";
+    removeButton.setAttribute("aria-label", `Remove ${camera.name}`);
+    removeButton.addEventListener("click", async () => {
+      if (!window.confirm(`Remove ${camera.name} from Jarvis?`)) return;
+      removeButton.disabled = true;
+      try {
+        await request(`/api/v2/cameras/${encodeURIComponent(camera.name)}`, { method: "DELETE" });
+        latestScan = null;
+        preview.classList.add("hidden");
+        cameraStatus.textContent = `Removed ${camera.name}.`;
+        await loadCameras();
+      } catch (error) {
+        cameraStatus.textContent = String(error);
+        removeButton.disabled = false;
+      }
+    });
+    card.appendChild(removeButton);
     cameraList.appendChild(card);
   });
 }
+
+addCameraForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const fields = new FormData(addCameraForm);
+  const submit = addCameraForm.querySelector("button") as HTMLButtonElement;
+  const value = (key: string) => String(fields.get(key) || "").trim();
+  submit.disabled = true;
+  cameraStatus.textContent = "Saving camera…";
+  try {
+    const camera = await request<CameraInfo>("/api/v2/cameras", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: value("name"), frigate_name: value("frigate_name"), zone_name: value("zone_name"),
+        detection_labels: value("detection_labels").split(",").map(v => v.trim()).filter(Boolean),
+      }),
+    });
+    addCameraForm.reset();
+    cameraStatus.textContent = `Added ${camera.name}. Use View live camera or Scan to check the connection.`;
+    await loadCameras();
+  } catch (error) {
+    cameraStatus.textContent = String(error);
+  } finally {
+    submit.disabled = false;
+  }
+});
 
 async function loadRecentMemory() {
   const items = await request<SearchResult[]>("/api/v2/tool-memory/recent");

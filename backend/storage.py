@@ -174,7 +174,21 @@ class Storage:
                     CHECK (source_id <> target_id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target_id);
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    name TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
             """)
+
+    def load_cameras(self, initial: list[dict]) -> list[dict]:
+        """Seed once; an explicitly empty saved list must stay empty."""
+        with self.connect() as conn:
+            conn.execute("INSERT INTO app_settings (name, value) VALUES ('cameras', ?) ON CONFLICT DO NOTHING", (json.dumps(initial),))
+            return json.loads(conn.execute("SELECT value FROM app_settings WHERE name='cameras'").fetchone()["value"])
+
+    def save_cameras(self, cameras: list[dict]) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE app_settings SET value=? WHERE name='cameras'", (json.dumps(cameras),))
 
     def replace_homebox_inventory(self, entities: list[HomeboxEntity]) -> int:
         by_id = {entity.entity_id: entity for entity in entities}

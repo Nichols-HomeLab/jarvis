@@ -103,18 +103,7 @@ class Settings:
 
 def _parse_cameras(raw_value: str | None) -> list[CameraConfig]:
     if not raw_value:
-        return [
-            CameraConfig(
-                name="pegboard",
-                zone_name="pegboard",
-                frigate_name="pegboard",
-            ),
-            CameraConfig(
-                name="workbench",
-                zone_name="main_workbench",
-                frigate_name="workbench",
-            ),
-        ]
+        return []
 
     data: list[dict[str, Any]] = json.loads(raw_value)
     cameras: list[CameraConfig] = []

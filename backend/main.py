@@ -18,9 +18,9 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Uplo
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
-from backend.config import load_settings
+from backend.config import CameraConfig, load_settings
 from backend.homebox import HomeboxClient
 from backend.auth import SessionGate, COOKIE_NAME
 from backend.models.openai_compatible import OpenAICompatibleClient
@@ -55,7 +55,7 @@ if storage.postgres:
         log.info("Migrated retained SQLite history: %s", imported)
 frigate = FrigateClient(settings.frigate_url, settings.frigate_token, settings.frigate_user, settings.frigate_password)
 streams = CameraStreams(frigate, settings.frigate_rtsp_url)
-cameras = CameraManager(settings.cameras, settings.camera_snapshot_dir, frigate)
+cameras = CameraManager(settings.cameras, settings.camera_snapshot_dir, frigate, storage)
 model_client = OpenAICompatibleClient(
     base_url=settings.openai_base_url,
     api_key=settings.openai_api_key,
@@ -138,7 +138,7 @@ async def periodic_homebox_sync() -> None:
 async def lifespan(_app: FastAPI):
     subscriber.start()
     tasks = [asyncio.create_task(periodic_memory_index())]
-    if settings.auto_scan_interval_seconds and cameras.list_cameras():
+    if settings.auto_scan_interval_seconds:
         tasks.append(asyncio.create_task(periodic_scans()))
     if settings.homebox_sync_interval_seconds and service.homebox.configured:
         tasks.append(asyncio.create_task(periodic_homebox_sync()))
@@ -245,9 +245,54 @@ async def list_cameras() -> list[dict[str, object]]:
             "zone_name": camera.zone_name,
             "frigate_name": camera.frigate_name or camera.name,
             "enabled": camera.enabled,
+            "detection_labels": camera.detection_labels,
         }
         for camera in cameras.list_cameras()
     ]
+
+
+class AddCameraRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    frigate_name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    zone_name: str = Field(min_length=1, max_length=120)
+    detection_labels: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("zone_name")
+    @classmethod
+    def validate_zone(cls, value):
+        if not value.strip():
+            raise ValueError("Zone is required")
+        return value.strip()
+
+    @field_validator("detection_labels")
+    @classmethod
+    def validate_labels(cls, values):
+        labels = list(dict.fromkeys(v.strip() for v in values if v.strip()))
+        if any(len(v) > 80 for v in labels):
+            raise ValueError("Detection labels must be at most 80 characters")
+        return labels
+
+
+@app.post("/api/v2/cameras", status_code=201)
+async def add_camera(payload: AddCameraRequest):
+    camera = CameraConfig(**payload.model_dump())
+    try:
+        cameras.add_camera(camera)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return payload.model_dump() | {"enabled": True}
+
+
+@app.delete("/api/v2/cameras/{camera_name}")
+async def remove_camera(camera_name: str):
+    # Finish any active scan before removing its configuration.
+    async with service._scan_locks.setdefault(camera_name, asyncio.Lock()):
+        try:
+            cameras.remove_camera(camera_name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Unknown camera") from exc
+        service.latest_scans.pop(camera_name, None)
+    return {"removed": camera_name}
 
 
 @app.post("/api/v2/cameras/{camera_name}/snapshot", response_model=CameraSnapshot)

@@ -29,6 +29,15 @@ The browser uses push to talk. STT and TTS run through the endpoints configured 
 
 See [.env.example](.env.example) and [Operations](docs/operations.md). Configure `BIFROST_BASE_URL` and all three `BIFROST_*_MODEL` routes before startup; Jarvis refuses to fall back to a different model provider. Set `BIFROST_API_KEY` only when required. Configure `FRIGATE_URL` and `JARVIS_CAMERAS_JSON` for cameras; `HOMEBOX_URL` and `HOMEBOX_API_KEY` are optional until Homebox is running again.
 
+Add cameras from the dashboard's **Add camera** form. Supply a unique Jarvis name,
+the exact Frigate camera name (case sensitive), a zone, and optional comma-separated
+detection labels. Live view and scans use the existing Frigate connection. Each
+camera card also has a remove control. Settings persist in the active database;
+`JARVIS_CAMERAS_JSON` seeds it only on first startup. An empty list stays empty,
+and cameras added after startup join automatic scans without a restart. Removing
+a camera stops future scans without deleting its historical observations or
+changing the camera in Frigate.
+
 Frigate provides latest frames and event snapshots. Jarvis can read Frigate’s RTSP restream without direct camera credentials. The Home Assistant adapter only accepts explicitly allowed entity IDs; lock, cover, climate, and switch writes require a second confirmation. The LLM cannot supply an arbitrary URL or direct API call.
 
 ## What Is Implemented

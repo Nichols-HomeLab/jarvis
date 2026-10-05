@@ -113,6 +113,13 @@ button {
   margin: 0;
 }
 
+.camera-setup { margin-bottom: 24px; }
+.camera-setup summary { cursor: pointer; font-weight: 600; }
+.camera-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; align-items: end; }
+.camera-form label { display: flex; flex-direction: column; gap: 8px; }
+.camera-form input { width: 100%; box-sizing: border-box; }
+.camera-card .remove-camera { background: transparent; border: 1px solid #8ba4a6; }
+#camera-status { min-height: 1.5em; }
 .camera-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
